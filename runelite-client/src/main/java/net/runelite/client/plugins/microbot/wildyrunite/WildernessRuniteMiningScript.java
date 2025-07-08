@@ -413,12 +413,16 @@ public class WildernessRuniteMiningScript extends Script {
                 isBanking = true;
                 updateStatus("Inventory full. Banking runite ore...");
                 walkToFerox();
-            }
-
-            if (currentLocation.distanceTo(FEROX_ENCLAVE_BANK) < 5) {
+            }            if (currentLocation.distanceTo(FEROX_ENCLAVE_BANK) < 5) {
                 updateStatus("Arrived at Ferox. Banking...");
                 bankOres();
+                
+                // Use pool for restoration
+                updateStatus("Banking complete. Using pool for restoration...");
                 drinkPoolIfAtFerox();
+                
+                // Wait a moment to ensure pool interaction is complete
+                sleep(1000);
 
                 if (config.stopAfterOneRun()) {
                     updateStatus("Stopping script after one full run.");
@@ -426,7 +430,7 @@ public class WildernessRuniteMiningScript extends Script {
                     return;
                 }
 
-                updateStatus("Banking done. Walking back to ore...");
+                updateStatus("Restoration complete. Walking back to ore...");
                 isBanking = false;
                 walkToOre();
             }
@@ -494,20 +498,45 @@ public class WildernessRuniteMiningScript extends Script {
         sleep(2000);
     }    @Override
     public void shutdown() {
-        updateStatus("Shutting down script.");
-        scriptRunning.set(false);
-        stopAllThreads();
-        Rs2Antiban.resetAntibanSettings();
-        stopWalking();
+        updateStatus("🛑 Shutting down script - Resetting all state...");
         
-        // Reset optimization states
+        // Stop the main script loop
+        scriptRunning.set(false);
+        
+        // Stop all background threads
+        stopAllThreads();
+        
+        // Reset all script state variables to initial values
+        totalMined = 0;  // Reset ore count
+        orePrice = 0;
+        isBanking = false;
+        fleeingFromPlayer = false;
         cameraConfigured = false;
         equipmentPrepared = false;
+        
+        // Clear cached location data
         lastKnownLocation = null;
         lastLocationUpdate = 0;
+        lastStuckCheck = 0;
+        
+        // Clear collections
+        recentAttackers.clear();
+        
+        // Reset antiban settings
+        Rs2Antiban.resetAntibanSettings();
+        
+        // Stop any active walking
+        stopWalking();
+          // Reset script start time for fresh start
+        scriptStartTime = 0;
+        
+        // Clear the status display
+        Microbot.status = "Script stopped - Ready for fresh start";
+        
+        updateStatus("✅ Script shutdown complete - All state reset.");
         
         super.shutdown();
-    }    
+    }
     // Manual reset function for stuck states
     public void resetScriptState() {
         updateStatus("🔄 Manual reset triggered - clearing all stuck states.");
@@ -598,21 +627,106 @@ public class WildernessRuniteMiningScript extends Script {
 
             Rs2Bank.closeBank();
             updateStatus("Banking complete.");
-        }
-    }    private void drinkPoolIfAtFerox() {
+        }    }    private void drinkPoolIfAtFerox() {
         WorldPoint currentLocation = getCachedLocation();
-        if (currentLocation.distanceTo(POOL_OF_REFRESHMENT_TILE) < 20) {
-            updateStatus("Drinking from Pool of Refreshment...");
+        if (currentLocation.distanceTo(POOL_OF_REFRESHMENT_TILE) < 20) {            updateStatus("Moving to Pool of Refreshment...");
+            
+            // Walk to the pool
             Rs2Walker.walkTo(POOL_OF_REFRESHMENT_TILE);
-            sleepUntil(() -> getCachedLocation().distanceTo(POOL_OF_REFRESHMENT_TILE) < 3, 5000);
-            TileObject pool = Rs2GameObject.getTileObject(39651); // Pool of Refreshment
-            if (pool != null && Rs2GameObject.interact(pool, "Drink")) {
-                sleepUntil(() -> Rs2Player.getRunEnergy() >= 100, 5000);
-                sleep(500);
-                updateStatus("Recovered run energy at pool.");
+            sleepUntil(() -> getCachedLocation().distanceTo(POOL_OF_REFRESHMENT_TILE) <= 2, 8000);
+            
+            // Give a moment for the area to load
+            sleep(1000);
+              // Debug: List all objects in the area to see what we can detect
+            updateStatus("🔍 Debugging: Looking for objects in area...");
+            java.util.List<GameObject> nearbyObjects = Rs2GameObject.getGameObjects(15);
+            updateStatus("Found " + nearbyObjects.size() + " objects nearby");
+            for (GameObject obj : nearbyObjects) {
+                var objComp = Rs2GameObject.convertToObjectComposition(obj);
+                if (obj.getId() == 39651 || (objComp != null && objComp.getName().toLowerCase().contains("pool"))) {
+                    String objName = objComp != null ? objComp.getName() : "Unknown";
+                    updateStatus("DEBUG: Found object - ID: " + obj.getId() + ", Name: " + objName);
+                }
+            }// Find the pool object - use non-deprecated methods
+            GameObject pool = Rs2GameObject.getGameObject("Pool of Refreshment");
+            if (pool == null) {
+                // Try alternative methods to find the pool
+                TileObject tilePool = Rs2GameObject.getTileObject(39651); // Pool of Refreshment ID
+                if (tilePool instanceof GameObject) {
+                    pool = (GameObject) tilePool;
+                } else if (tilePool == null) {
+                    updateStatus("Pool of Refreshment not found, trying by name in area...");
+                    tilePool = Rs2GameObject.getTileObject("Pool of Refreshment", 20);
+                    if (tilePool instanceof GameObject) {
+                        pool = (GameObject) tilePool;
+                    }
+                }
+            }
+            
+            if (pool != null) {
+                updateStatus("Found Pool of Refreshment, checking health/stamina...");
+                
+                // Only interact if we actually need restoration
+                if (!isHealthFull() || !isStaminaFull()) {
+                    updateStatus("Need restoration - Health: " + Rs2Player.getHealthPercentage() + "%, Run: " + Rs2Player.getRunEnergy() + "%");
+                    
+                    int maxAttempts = 5;
+                    int attempts = 0;
+                    
+                    while (attempts < maxAttempts && (!isHealthFull() || !isStaminaFull())) {
+                        updateStatus("Drinking from pool... Attempt " + (attempts + 1) + "/" + maxAttempts);
+                        
+                        // Try to interact with the pool
+                        if (Rs2GameObject.interact(pool, "Drink")) {
+                            updateStatus("Clicked pool, waiting for effect...");
+                            
+                            // Wait for the interaction to start
+                            sleepUntil(() -> Rs2Player.isAnimating(), 3000);
+                            
+                            // Wait for animation to finish
+                            sleepUntil(() -> !Rs2Player.isAnimating(), 5000);
+                            
+                            // Give time for stats to update
+                            sleep(2000);
+                            
+                            updateStatus("After drinking - Health: " + Rs2Player.getHealthPercentage() + "%, Run: " + Rs2Player.getRunEnergy() + "%");
+                            
+                            // Check if we're fully restored
+                            if (isHealthFull() && isStaminaFull()) {
+                                updateStatus("✅ Fully restored at pool!");
+                                break;
+                            }
+                        } else {
+                            updateStatus("Failed to interact with pool, trying again...");
+                            sleep(1000);
+                        }
+                        
+                        attempts++;
+                        
+                        if (attempts < maxAttempts) {
+                            sleep(500); // Brief pause between attempts
+                        }
+                    }
+                    
+                    if (attempts >= maxAttempts && (!isHealthFull() || !isStaminaFull())) {
+                        updateStatus("⚠️ Pool restoration incomplete after " + maxAttempts + " attempts.");
+                    }
+                } else {
+                    updateStatus("Already at full health and stamina, skipping pool.");
+                }
+            } else {
+                updateStatus("❌ Could not find Pool of Refreshment!");
             }
         }
-    }    private void handleLumbridgeDeathRecovery() {
+    }
+    
+    private boolean isHealthFull() {
+        return Rs2Player.getHealthPercentage() >= 100;
+    }
+    
+    private boolean isStaminaFull() {
+        return Rs2Player.getRunEnergy() >= 100;
+    }private void handleLumbridgeDeathRecovery() {
         updateStatus("Died → Recovering from Lumbridge");
         
         // Reset all combat/fleeing states since we died
