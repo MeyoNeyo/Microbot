@@ -31,7 +31,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 public class AgilityScript extends Script
 {
 
-	public static String version = "1.2.0";
+	public static String version = "1.2.1";
 	final MicroAgilityPlugin plugin;
 	final MicroAgilityConfig config;
 
@@ -42,25 +42,6 @@ public class AgilityScript extends Script
 	{
 		this.plugin = plugin;
 		this.config = config;
-	}
-
-	public void handleAlch()
-	{
-		scheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
-			if (!config.alchemy())
-			{
-				return;
-			}
-			if (plugin.getCourseHandler().getCurrentObstacleIndex() != 0)
-			{
-				if (Rs2Player.isMoving() || Rs2Player.isAnimating())
-				{
-					return;
-				}
-			}
-
-			getAlchItem().ifPresent(item -> Rs2Magic.alch(item, 50, 75));
-		}, 0, 300, TimeUnit.MILLISECONDS);
 	}
 
 	@Override
@@ -103,7 +84,6 @@ public class AgilityScript extends Script
 					return;
 				}
 
-				final LocalPoint playerLocation = Microbot.getClient().getLocalPlayer().getLocalLocation();
 				final WorldPoint playerWorldLocation = Microbot.getClient().getLocalPlayer().getWorldLocation();
 
 				if (handleFood())
@@ -115,7 +95,7 @@ public class AgilityScript extends Script
 					return;
 				}
 
-				if (plugin.getCourseHandler().getCurrentObstacleIndex() != 0)
+				if (plugin.getCourseHandler().getCurrentObstacleIndex() > 0)
 				{
 					if (Rs2Player.isMoving() || Rs2Player.isAnimating())
 					{
@@ -128,6 +108,11 @@ public class AgilityScript extends Script
 					return;
 				}
 
+				if (config.alchemy())
+				{
+					getAlchItem().ifPresent(item -> Rs2Magic.alch(item, 50, 75));
+				}
+
 				if (plugin.getCourseHandler() instanceof PrifddinasCourse)
 				{
 					PrifddinasCourse course = (PrifddinasCourse) plugin.getCourseHandler();
@@ -136,14 +121,14 @@ public class AgilityScript extends Script
 						return;
 					}
 
-					if (course.handleWalkToStart(playerWorldLocation, playerLocation))
+					if (course.handleWalkToStart(playerWorldLocation))
 					{
 						return;
 					}
 				}
 				else if (!(plugin.getCourseHandler() instanceof GnomeStrongholdCourse))
 				{
-					if (plugin.getCourseHandler().handleWalkToStart(playerWorldLocation, playerLocation))
+					if (plugin.getCourseHandler().handleWalkToStart(playerWorldLocation))
 					{
 						return;
 					}
@@ -222,7 +207,7 @@ public class AgilityScript extends Script
 				{
 					continue;
 				}
-				if (!Rs2GameObject.canReach(markOfGraceTile.getTile().getWorldLocation()))
+				if (!Rs2GameObject.canReach(markOfGraceTile.getTile().getWorldLocation(), 1, 1, 1, 1))
 				{
 					continue;
 				}
@@ -260,11 +245,11 @@ public class AgilityScript extends Script
 
 	private boolean handleSummerPies()
 	{
-		if (plugin.getCourseHandler().getCurrentObstacleIndex() != 0)
+		if (plugin.getCourseHandler().getCurrentObstacleIndex() > 0)
 		{
 			return false;
 		}
-		if (Rs2Player.getBoostedSkillLevel(Skill.AGILITY) >= plugin.getCourseHandler().getRequiredLevel())
+		if (Rs2Player.getBoostedSkillLevel(Skill.AGILITY) > plugin.getCourseHandler().getRequiredLevel())
 		{
 			return false;
 		}
