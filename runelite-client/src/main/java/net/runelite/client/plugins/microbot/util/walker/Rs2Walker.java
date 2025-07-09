@@ -195,7 +195,7 @@ public class Rs2Walker {
             List<WorldPoint> path = ShortestPathPlugin.getPathfinder().getPath();
             int pathSize = path.size();
 
-
+            
             if (path.get(pathSize - 1).distanceTo(target) > config.reachedDistance()) {
                 Microbot.log("Location impossible to reach");
                 setTarget(null);
@@ -3098,70 +3098,60 @@ public class Rs2Walker {
      * @param forceBanking If true, forces banking route regardless of efficiency
      * @return true if travel was successful, false otherwise
      */
-    public static WalkerState walkWithBankedTransportsAndState(WorldPoint target, int distance, boolean forceBanking) {
-        if (target == null) {
-            log.warn("Cannot travel to null target location");
-            return WalkerState.EXIT;
-        }
-        if (Microbot.getClient().isClientThread()) {
-            Microbot.log("Please do not call the walker from the main thread");
-            return WalkerState.EXIT;
-        }
-        if (Rs2Tile.getReachableTilesFromTile(Rs2Player.getWorldLocation(), distance).containsKey(target)
-                || !Rs2Tile.isWalkable(LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), target)) && Rs2Player.getWorldLocation().distanceTo(target) <= distance) {
-            return WalkerState.ARRIVED;
-        }
-        if (ShortestPathPlugin.getPathfinder() != null && !ShortestPathPlugin.getPathfinder().isDone())
-            return WalkerState.MOVING;
-        if ((currentTarget != null && currentTarget.equals(target)) && ShortestPathPlugin.getMarker() != null)
-            return WalkerState.MOVING;
-        setTarget(target);
-        // Check what transport items are needed
-        TransportRouteAnalysis comparison = compareRoutes(target);        
-        List<Transport> missingTransports = getMissingTransports(getTransportsForDestination(target, true));
-        log.info("\n\tFound {} missing req. for transports to destination in the bank: {}", 
-                missingTransports.size(), target);
-        Map<Integer, Integer> missingItemsWithQuantities = getMissingTransportItemIdsWithQuantities(missingTransports);
-        
-        log.info("\n\tFor Found {} missing transports we found the {} missing items for destination: {}", 
-                missingTransports.size(), missingItemsWithQuantities.size(), target);
-        setTarget(null); 
-        // If no missing transport items, go directly
-        if (missingItemsWithQuantities.isEmpty() && !forceBanking) {
-            log.info("\n\tNo missing transport items, traveling directly to: \n\t" + target);            
-            WalkerState state = walkWithState(target, distance);
-            if (state == WalkerState.ARRIVED) {
-                log.info("\n\tArrived directly at target: " + target);
-            } else {
-                log.warn("\n\tFailed to arrive directly at target: " + target + ", state: " + state);
-            }
-            return state;
-        }else{        
-            // Compare routes if we have missing items that could be obtained from bank
-            log.info("\n\tRoute comparison: \n\t\t" + comparison.getAnalysis());            
-            // If forced banking or banking route is more efficient, go via bank
-            if (forceBanking || !comparison.isDirectIsFaster()) {
-                if (comparison.getNearestBank() != null) {
-                    log.info("\n\tUsing banking route: \n\t\t{} -> {} -> {}", 
-                            Rs2Player.getWorldLocation(), comparison.getBankLocation(), target);
-                    
-                    // Handle the complete banking workflow using legacy walkTo approach
-                    return walkWithBankingState(comparison.getBankLocation(), missingItemsWithQuantities, target,distance);
-                } else {
-                    log.warn("\n\tBanking route requested but no accessible bank found, trying direct route");
-                    return walkWithState(target, distance);
-                }
-            } else {
-                log.info("\n\tDirect route is more efficient despite missing items, traveling directly");
-                return walkWithState(target, distance);
-            }
-        }
-        
-        // Fallback to direct travel
-        //log.info("\n\tFallback: traveling directly to " + target);
-        //return walkWithState(target, distance);
+public static WalkerState walkWithBankedTransportsAndState(WorldPoint target, int distance, boolean forceBanking) {
+    if (target == null) {
+        log.warn("Cannot travel to null target location");
+        return WalkerState.EXIT;
     }
-    
+    if (Microbot.getClient().isClientThread()) {
+        Microbot.log("Please do not call the walker from the main thread");
+        return WalkerState.EXIT;
+    }
+    // If already at or near the target, or the tile is not walkable but within distance, return ARRIVED
+    if (Rs2Tile.getReachableTilesFromTile(Rs2Player.getWorldLocation(), distance).containsKey(target)
+            || (!Rs2Tile.isWalkable(LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), target))
+                && Rs2Player.getWorldLocation().distanceTo(target) <= distance)) {
+        return WalkerState.ARRIVED;
+    }
+    // If already walking to this target, or pathfinder is still running, return MOVING
+    if (ShortestPathPlugin.getPathfinder() != null && !ShortestPathPlugin.getPathfinder().isDone())
+        return WalkerState.MOVING;
+    if ((currentTarget != null && currentTarget.equals(target)) && ShortestPathPlugin.getMarker() != null)
+        return WalkerState.MOVING;
+
+    setTarget(target);
+
+    // Analyze route and missing transports/items
+    TransportRouteAnalysis comparison = compareRoutes(target);
+    List<Transport> missingTransports = getMissingTransports(getTransportsForDestination(target, true));
+    Map<Integer, Integer> missingItemsWithQuantities = getMissingTransportItemIdsWithQuantities(missingTransports);
+
+    // If no missing transport items and not forcing banking, walk directly
+    if (missingItemsWithQuantities.isEmpty() && !forceBanking) {
+        log.info("No missing transport items, traveling directly to: {}", target);
+        WalkerState state = walkWithState(target, distance);
+        if (state == WalkerState.ARRIVED) {
+            log.info("Arrived directly at target: {}", target);
+        } else {
+            log.warn("Failed to arrive directly at target: {}, state: {}", target, state);
+        }
+        return state;
+    }
+
+    // If forced banking or banking route is more efficient, go via bank
+    if (forceBanking || !comparison.isDirectIsFaster()) {
+        if (comparison.getNearestBank() != null) {
+            log.info("Using banking route: {} -> {} -> {}", Rs2Player.getWorldLocation(), comparison.getBankLocation(), target);
+            return walkWithBankingState(comparison.getBankLocation(), missingItemsWithQuantities, target, distance);
+        } else {
+            log.warn("Banking route requested but no accessible bank found, trying direct route");
+            return walkWithState(target, distance);
+        }
+    } else {
+        log.info("Direct route is more efficient despite missing items, traveling directly");
+        return walkWithState(target, distance);
+    }
+}    
     
    
    
