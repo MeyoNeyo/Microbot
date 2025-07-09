@@ -542,21 +542,28 @@ public class ShortestPathPlugin extends Plugin implements KeyListener {
         restartPathfinding(start, pathfinder.getTargets());
     }
 
-    public WorldPoint calculateMapPoint(Point point) {
-        WorldMap worldMap = client.getWorldMap();
-        float zoom = worldMap.getWorldMapZoom();
-        final WorldPoint mapPoint = new WorldPoint(worldMap.getWorldMapPosition().getX(), worldMap.getWorldMapPosition().getY(), 0);
-        final Point middle = mapWorldPointToGraphicsPoint(mapPoint);
+public WorldPoint calculateMapPoint(Point point) {
+    WorldMap worldMap = client.getWorldMap();
+    float zoom = worldMap.getWorldMapZoom();
+    final WorldPoint mapPoint = new WorldPoint(worldMap.getWorldMapPosition().getX(), worldMap.getWorldMapPosition().getY(), 0);
+    final Point middle = mapWorldPointToGraphicsPoint(mapPoint);
 
-        if (point == null || middle == null) {
-            return null;
-        }
-
-        final int dx = (int) ((point.getX() - middle.getX()) / zoom);
-        final int dy = (int) ((-(point.getY() - middle.getY())) / zoom);
-
-        return mapPoint.dx(dx).dy(dy);
+    if (point == null || middle == null) {
+        return null;
     }
+
+    final int dx = (int) ((point.getX() - middle.getX()) / zoom);
+    final int dy = (int) ((-(point.getY() - middle.getY())) / zoom);
+
+    // Get the player's current plane if available, otherwise default to 0
+    int plane = 0;
+    if (client.getLocalPlayer() != null) {
+        plane = client.getLocalPlayer().getWorldLocation().getPlane();
+    }
+
+    WorldPoint clicked = mapPoint.dx(dx).dy(dy);
+    return new WorldPoint(clicked.getX(), clicked.getY(), plane);
+}
 
     public Point mapWorldPointToGraphicsPoint(WorldPoint worldPoint) {
         WorldMap worldMap = client.getWorldMap();
