@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 
 
 @PluginDescriptor(
-        name = PluginDescriptor.Mocrosoft + "ApexFighter",
+        name = "777 ApexFighter",
         description = "Microbot ApexFighter plugin",
         tags = {"fight", "microbot", "misc", "combat", "playerassistant"},
         enabledByDefault = false
