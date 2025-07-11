@@ -28,7 +28,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
+/*
 public class WildernessRuniteMiningScript extends Script {
 
     @Getter
@@ -804,3 +804,4 @@ public class WildernessRuniteMiningScript extends Script {
     }
 
 }
+*/

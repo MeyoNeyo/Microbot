@@ -9,7 +9,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 
 import javax.inject.Inject;
 import java.awt.*;
-
+/* 
 @PluginDescriptor(
         name = PluginDescriptor.Default + "Runite Miner",
         description = "Mines Runite ore in the wilderness, banks, and avoids other players.",
@@ -50,3 +50,4 @@ public class WildernessRuniteMiningPlugin extends Plugin {
         return script;
     }
 }
+*/
