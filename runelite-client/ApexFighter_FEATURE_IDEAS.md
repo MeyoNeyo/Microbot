@@ -1,6 +1,6 @@
 # ApexFighter Future Feature Ideas
 
-## 1. Loot Tracking Overlay
+## 1. Loot Tracking Overlay (✅ Complete)
 - Add inside overlay display all items picked up/looted during the session.
 - Show the amount of each looted item.
 
