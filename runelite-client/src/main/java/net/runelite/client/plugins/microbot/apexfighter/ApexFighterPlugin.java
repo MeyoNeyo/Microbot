@@ -57,6 +57,10 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // Track previous state to filter out banking/food
+    private State previousState = null;
+    // Track previous inventory for loot diffing
+    private final Map<Integer, Integer> previousInventory = new ConcurrentHashMap<>();
     public static final String version = "1.3.1";
     private static final String SET = "Set";
     private static final String CENTER_TILE = ColorUtil.wrapWithColorTag("Center Tile", JagexColors.MENU_TARGET);
@@ -106,6 +110,8 @@ public class ApexFighterPlugin extends Plugin {
     @Override
     protected void startUp() throws AWTException {
         sessionLoot.clear();
+        previousInventory.clear();
+        previousState = null;
         Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -174,11 +180,32 @@ public class ApexFighterPlugin extends Plugin {
     public void onItemContainerChanged(ItemContainerChanged event) {
         // Use 93 (InventoryID.INVENTORY.getId()) directly to avoid deprecated field
         if (event.getContainerId() != 93) return;
-        if (!Microbot.isLoggedIn() || getState() == State.BANKING || getState() == State.WALKING) return;
+        if (!Microbot.isLoggedIn()) return;
+
+        // Build current inventory map
+        Map<Integer, Integer> currentInventory = new ConcurrentHashMap<>();
         for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
             if (item.getId() <= 0) continue;
-            sessionLoot.merge(item.getId(), item.getQuantity(), Integer::sum);
+            currentInventory.merge(item.getId(), item.getQuantity(), Integer::sum);
         }
+
+        // Only add loot if previous state was not BANKING or WALKING
+        if (previousState != State.BANKING && previousState != State.WALKING) {
+            for (Map.Entry<Integer, Integer> entry : currentInventory.entrySet()) {
+                int itemId = entry.getKey();
+                int newQty = entry.getValue();
+                int oldQty = previousInventory.getOrDefault(itemId, 0);
+                int diff = newQty - oldQty;
+                if (diff > 0) {
+                    sessionLoot.merge(itemId, diff, Integer::sum);
+                }
+            }
+        }
+
+        // Update previous inventory and state
+        previousInventory.clear();
+        previousInventory.putAll(currentInventory);
+        previousState = getState();
     }
     public static void resetLocation() {
         setCenter(new WorldPoint(0, 0, 0));
