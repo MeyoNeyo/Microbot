@@ -10,6 +10,11 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 import javax.inject.Inject;
 import java.awt.*;
 
+
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import java.util.Map;
+
 public class ApexFighterInfoOverlay extends OverlayPanel {
     private final ApexFighterConfig config;
 
@@ -30,7 +35,6 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .color(Color.ORANGE)
                     .build());
 
-
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Play Style: " + config.playStyle() + "(" + config.playStyle().getPrimaryTickInterval() + "," + config.playStyle().getSecondaryTickInterval() + ")")
                     .right("Attack cooldown: " + ApexFighterPlugin.getCooldown())
@@ -41,7 +45,29 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .right("Version:" + ApexFighterPlugin.version)
                     .build());
 
-
+            // --- Loot Tracking Overlay ---
+            if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
+                panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());
+                for (Map.Entry<Integer, Integer> entry : ApexFighterPlugin.sessionLoot.entrySet()) {
+                    int itemId = entry.getKey();
+                    int amount = entry.getValue();
+                    String itemName = "";
+                    try {
+                        Rs2ItemModel itemModel = Rs2Inventory.get(itemId);
+                        if (itemModel != null && itemModel.getName() != null && !itemModel.getName().isEmpty()) {
+                            itemName = itemModel.getName();
+                        } else {
+                            itemName = "Item " + itemId;
+                        }
+                    } catch (Exception ignored) {
+                        itemName = "Item " + itemId;
+                    }
+                    panelComponent.getChildren().add(LineComponent.builder()
+                        .left(itemName)
+                        .right("x" + amount)
+                        .build());
+                }
+            }
         } catch (Exception ex) {
             Microbot.logStackTrace(this.getClass().getSimpleName(), ex);
         }

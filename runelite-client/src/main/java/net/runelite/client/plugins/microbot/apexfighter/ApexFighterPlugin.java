@@ -37,12 +37,16 @@ import java.awt.*;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+
 
 @PluginDescriptor(
         name = PluginDescriptor.Mocrosoft + "ApexFighter",
@@ -51,6 +55,7 @@ import java.util.stream.Collectors;
         enabledByDefault = false
 )
 @Slf4j
+
 public class ApexFighterPlugin extends Plugin {
     public static final String version = "1.3.1";
     private static final String SET = "Set";
@@ -64,6 +69,8 @@ public class ApexFighterPlugin extends Plugin {
     @Getter
     @Setter
     public static int cooldown = 0;
+    // Loot tracking: itemId -> amount looted this session
+    public static final Map<Integer, Integer> sessionLoot = new ConcurrentHashMap<>();
     private final CannonScript cannonScript = new CannonScript();
     private final AttackNpcScript attackNpc = new AttackNpcScript();
     private final FoodScript foodScript = new FoodScript();
@@ -90,6 +97,7 @@ public class ApexFighterPlugin extends Plugin {
     @Inject
     private net.runelite.client.plugins.microbot.apexfighter.ApexFighterInfoOverlay playerAssistInfoOverlay;
     private Point lastMenuOpenedPoint;
+    // (removed duplicate sessionLoot declaration)
     protected ScheduledExecutorService initializerExecutor = Executors.newSingleThreadScheduledExecutor();
     @Provides
     net.runelite.client.plugins.microbot.apexfighter.ApexFighterConfig provideConfig(ConfigManager configManager) {
@@ -97,7 +105,8 @@ public class ApexFighterPlugin extends Plugin {
     }
     @Override
     protected void startUp() throws AWTException {
-		Microbot.pauseAllScripts.compareAndSet(true, false);
+        sessionLoot.clear();
+        Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         AtomicReference<ScheduledFuture<?>> futureRef = new AtomicReference<>();
@@ -135,7 +144,9 @@ public class ApexFighterPlugin extends Plugin {
         //slayerScript.run(config);
         Microbot.getSpecialAttackConfigs().setSpecialAttack(true);
     }
+    @Override
     protected void shutDown() {
+        sessionLoot.clear();
         lootScript.shutdown();
         cannonScript.shutdown();
         attackNpc.shutdown();
@@ -154,6 +165,20 @@ public class ApexFighterPlugin extends Plugin {
         resetLocation();
         overlayManager.remove(playerAssistOverlay);
         overlayManager.remove(playerAssistInfoOverlay);
+    }
+
+    /**
+     * Listen for inventory changes and update loot tracking if a new item is added after looting.
+     */
+    @Subscribe
+    public void onItemContainerChanged(ItemContainerChanged event) {
+        // Use 93 (InventoryID.INVENTORY.getId()) directly to avoid deprecated field
+        if (event.getContainerId() != 93) return;
+        if (!Microbot.isLoggedIn() || getState() == State.BANKING || getState() == State.WALKING) return;
+        for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
+            if (item.getId() <= 0) continue;
+            sessionLoot.merge(item.getId(), item.getQuantity(), Integer::sum);
+        }
     }
     public static void resetLocation() {
         setCenter(new WorldPoint(0, 0, 0));
