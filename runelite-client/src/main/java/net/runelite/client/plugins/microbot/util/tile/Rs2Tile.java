@@ -26,6 +26,27 @@ import java.util.stream.Collectors;
 
 public abstract class Rs2Tile implements Tile {
 
+    /**
+     * Checks if there is a clear line of sight (no obstacles) between two tiles using Bresenham's algorithm.
+     * Only checks walkability for each tile along the path.
+     */
+    public static boolean hasLineOfSight(WorldPoint from, WorldPoint to) {
+        if (from == null || to == null || from.getPlane() != to.getPlane()) return false;
+        int x0 = from.getX(), y0 = from.getY();
+        int x1 = to.getX(), y1 = to.getY();
+        int dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        int err = dx - dy;
+        while (true) {
+            if (!isWalkable(LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), x0, y0))) return false;
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; x0 += sx; }
+            if (e2 < dx) { err += dx; y0 += sy; }
+        }
+        return true;
+    }
+
     @Getter
     public static List<MutablePair<WorldPoint, Integer>> dangerousGraphicsObjectTiles = new ArrayList<>();
 

@@ -71,6 +71,13 @@ public class AttackNpcScript extends Script {
                                     if (name == null || name.isEmpty()) return false;
                                     return !npcsToAttack.isEmpty() && npcsToAttack.stream().anyMatch(name::equalsIgnoreCase);
                                 })
+                                .filter(npc -> {
+                                    // Multi-tile LOS: only if safespot is enabled
+                                    if (config.toggleCenterTile()) {
+                                        return net.runelite.client.plugins.microbot.util.tile.Rs2Tile.hasLineOfSight(config.centerLocation(), npc.getWorldLocation());
+                                    }
+                                    return true;
+                                })
                                 .sorted(Comparator.comparingInt((Rs2NpcModel npc) -> Objects.equals(npc.getInteracting(), Microbot.getClient().getLocalPlayer()) ? 0 : 1)
                                         .thenComparingInt(npc -> Rs2Player.getRs2WorldPoint().distanceToPath(npc.getWorldLocation())))
                                 .collect(Collectors.toList())
