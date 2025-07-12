@@ -48,23 +48,10 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
             // --- Loot Tracking Overlay ---
             if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
                 panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());
-                for (Map.Entry<Integer, Integer> entry : ApexFighterPlugin.sessionLoot.entrySet()) {
-                    int itemId = entry.getKey();
-                    int amount = entry.getValue();
-                    String itemName = "";
-                    try {
-                        Rs2ItemModel itemModel = Rs2Inventory.get(itemId);
-                        if (itemModel != null && itemModel.getName() != null && !itemModel.getName().isEmpty()) {
-                            itemName = itemModel.getName();
-                        } else {
-                            itemName = "Item " + itemId;
-                        }
-                    } catch (Exception ignored) {
-                        itemName = "Item " + itemId;
-                    }
+                for (LootEntry entry : ApexFighterPlugin.sessionLoot.values()) {
                     panelComponent.getChildren().add(LineComponent.builder()
-                        .left(itemName)
-                        .right("x" + amount)
+                        .left(entry.getName())
+                        .right("x" + entry.getQuantity())
                         .build());
                 }
             }

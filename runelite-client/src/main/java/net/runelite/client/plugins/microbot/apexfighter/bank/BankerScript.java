@@ -161,7 +161,13 @@ public class BankerScript extends Script {
             String itemName = entry.getKey();
             Integer requiredAmount = entry.getValue();
             int currentAmount = Rs2Inventory.count(itemName);
-            if (requiredAmount != null && currentAmount < requiredAmount) {
+            if (requiredAmount != null && requiredAmount == Integer.MAX_VALUE) {
+                // Withdraw all of this item
+                int inBank = Rs2Bank.count(itemName);
+                if (inBank > 0) {
+                    Rs2Bank.withdrawAll(true, itemName);
+                }
+            } else if (requiredAmount != null && currentAmount < requiredAmount) {
                 Rs2Bank.withdrawX(true, itemName, requiredAmount - currentAmount);
             } else if (requiredAmount == null && currentAmount == 0) {
                 // If no amount specified, always take 1
@@ -190,7 +196,8 @@ public class BankerScript extends Script {
                     .collect(Collectors.toList());
             int totalInInventory = inventoryItems.stream().mapToInt(Rs2ItemModel::getQuantity).sum();
             if (keepAmount == null) keepAmount = 1;
-            int toDeposit = totalInInventory - keepAmount;
+            // If keepAmount is Integer.MAX_VALUE, keep all (deposit none)
+            int toDeposit = (keepAmount == Integer.MAX_VALUE) ? 0 : totalInInventory - keepAmount;
             if (toDeposit > 0 && !inventoryItems.isEmpty()) {
                 Rs2Bank.depositX(inventoryItems.get(0).getId(), toDeposit);
             }
@@ -248,11 +255,16 @@ public class BankerScript extends Script {
             if (item.contains("-")) {
                 String[] parts = item.split("-");
                 String name = parts[0].trim();
-                try {
-                    int amount = Integer.parseInt(parts[1].trim());
-                    result.put(name, amount);
-                } catch (NumberFormatException e) {
-                    result.put(name, null); // fallback if amount is invalid
+                String amountStr = parts[1].trim();
+                if (amountStr.equalsIgnoreCase("all")) {
+                    result.put(name, Integer.MAX_VALUE);
+                } else {
+                    try {
+                        int amount = Integer.parseInt(amountStr);
+                        result.put(name, amount);
+                    } catch (NumberFormatException e) {
+                        result.put(name, null); // fallback if amount is invalid
+                    }
                 }
             } else {
                 result.put(item, null);

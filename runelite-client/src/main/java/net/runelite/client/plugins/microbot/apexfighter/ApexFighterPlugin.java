@@ -73,8 +73,8 @@ public class ApexFighterPlugin extends Plugin {
     @Getter
     @Setter
     public static int cooldown = 0;
-    // Loot tracking: itemId -> amount looted this session
-    public static final Map<Integer, Integer> sessionLoot = new ConcurrentHashMap<>();
+    // Loot tracking: itemId -> LootEntry (stores name and quantity)
+    public static final Map<Integer, LootEntry> sessionLoot = new ConcurrentHashMap<>();
     private final CannonScript cannonScript = new CannonScript();
     private final AttackNpcScript attackNpc = new AttackNpcScript();
     private final FoodScript foodScript = new FoodScript();
@@ -112,6 +112,12 @@ public class ApexFighterPlugin extends Plugin {
         sessionLoot.clear();
         previousInventory.clear();
         previousState = null;
+        // Initialize previousInventory with current inventory so only new pickups are tracked
+        for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
+            if (item.getId() > 0) {
+                previousInventory.put(item.getId(), item.getQuantity());
+            }
+        }
         Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -197,7 +203,18 @@ public class ApexFighterPlugin extends Plugin {
                 int oldQty = previousInventory.getOrDefault(itemId, 0);
                 int diff = newQty - oldQty;
                 if (diff > 0) {
-                    sessionLoot.merge(itemId, diff, Integer::sum);
+                    sessionLoot.compute(itemId, (id, lootEntry) -> {
+                        String itemName;
+                        Rs2ItemModel itemModel = net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.get(itemId);
+                        if (itemModel != null && itemModel.getName() != null) {
+                            itemName = itemModel.getName();
+                        } else {
+                            itemName = String.valueOf(itemId);
+                        }
+                        if (lootEntry == null) return new LootEntry(id, itemName, diff);
+                        lootEntry.addQuantity(diff);
+                        return lootEntry;
+                    });
                 }
             }
         }
