@@ -313,18 +313,33 @@ public class WineOfZamorakScript extends Script {
             if (targetWorld != null) {
                 boolean hopped = Microbot.hopToWorld(targetWorld.getId());
                 if (hopped) {
-                    sleepUntil(() -> Microbot.getClient().getWorld() != currentWorld, 10000);
-                    recentlyVisitedWorlds.add(currentWorld);
-                    lastWorldHop = System.currentTimeMillis();
-                    worldsHopped++;
-                    if (recentlyVisitedWorlds.size() > 10) {
-                        recentlyVisitedWorlds.clear();
+                    // Wait for world to change
+                    boolean worldChanged = sleepUntil(() -> Microbot.getClient().getWorld() != currentWorld, 10000);
+                    // Wait for player to be fully loaded in new world (LOGGED_IN and valid location)
+                    boolean loaded = false;
+                    if (worldChanged) {
+                        loaded = sleepUntil(() ->
+                            Microbot.getClient().getGameState() == net.runelite.api.GameState.LOGGED_IN &&
+                            Rs2Player.getWorldLocation() != null &&
+                            Rs2Player.getWorldLocation().getX() > 0,
+                            10000);
                     }
-                    if (Rs2Inventory.isFull()) {
-                        Microbot.log("Inventory full after world hop, going to bank.");
-                        state = WineOfZamorakState.BANKING;
+                    if (worldChanged && loaded) {
+                        recentlyVisitedWorlds.add(currentWorld);
+                        lastWorldHop = System.currentTimeMillis();
+                        worldsHopped++;
+                        if (recentlyVisitedWorlds.size() > 10) {
+                            recentlyVisitedWorlds.clear();
+                        }
+                        if (Rs2Inventory.isFull()) {
+                            Microbot.log("Inventory full after world hop, going to bank.");
+                            state = WineOfZamorakState.BANKING;
+                        } else {
+                            Microbot.log("Inventory not full after world hop, returning to WAITING_FOR_WINE.");
+                            state = WineOfZamorakState.WAITING_FOR_WINE;
+                        }
                     } else {
-                        Microbot.log("Inventory not full after world hop, returning to WAITING_FOR_WINE.");
+                        Microbot.log("World hop failed or player not loaded in new world");
                         state = WineOfZamorakState.WAITING_FOR_WINE;
                     }
                 } else {

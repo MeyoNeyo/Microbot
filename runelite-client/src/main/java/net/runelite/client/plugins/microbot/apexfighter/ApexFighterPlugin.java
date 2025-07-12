@@ -448,5 +448,12 @@ public class ApexFighterPlugin extends Plugin {
                 );
             }
         }
+        // Handle Set Safe Spot click
+        if (entry.getOption().equals(SET) && entry.getTarget().equals(SAFE_SPOT)) {
+            WorldPoint selected = getSelectedWorldPoint();
+            if (selected != null) {
+                setSafeSpot(selected);
+            }
+        }
     }
 }
