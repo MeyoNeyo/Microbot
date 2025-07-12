@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 
 public class AttackNpcScript extends Script {
     private long lastHopTime = 0;
+    private long lastMonsterFoundTime = System.currentTimeMillis();
 
     public static Actor currentNpc = null;
     public static AtomicReference<List<Rs2NpcModel>> filteredAttackableNpcs = new AtomicReference<>(new ArrayList<>());
@@ -127,7 +128,44 @@ public class AttackNpcScript extends Script {
                     }
                 }
 
+
                 filteredAttackableNpcs.set(attackableNpcs);
+
+                // Monster timeout world hop logic
+                if (config.maxSecondsWithoutMonstersBeforeHop() > 0) {
+                    if (attackableNpcs.isEmpty()) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastMonsterFoundTime > config.maxSecondsWithoutMonstersBeforeHop() * 1000L) {
+                            long hopNow = System.currentTimeMillis();
+                            if (hopNow - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
+                                Microbot.pauseAllScripts.set(true);
+                                net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
+                                if (worldResult != null) {
+                                    List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds();
+                                    boolean isMember = Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
+                                    List<net.runelite.http.api.worlds.World> safeWorlds = worlds.stream()
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.PVP))
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.DEADMAN))
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.HIGH_RISK))
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SKILL_TOTAL))
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.TOURNAMENT))
+                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SEASONAL))
+                                        .filter(w -> isMember == w.getTypes().contains(net.runelite.http.api.worlds.WorldType.MEMBERS))
+                                        .filter(w -> w.getId() != Microbot.getClient().getWorld())
+                                        .collect(java.util.stream.Collectors.toList());
+                                    if (!safeWorlds.isEmpty()) {
+                                        net.runelite.http.api.worlds.World nextWorld = safeWorlds.get(new java.util.Random().nextInt(safeWorlds.size()));
+                                        Microbot.hopToWorld(nextWorld.getId());
+                                        lastHopTime = hopNow;
+                                    }
+                                }
+                            }
+                            lastMonsterFoundTime = now; // reset to avoid rapid hops
+                        }
+                    } else {
+                        lastMonsterFoundTime = System.currentTimeMillis();
+                    }
+                }
 
                 if(config.state().equals(State.BANKING) || config.state().equals(State.WALKING))
                     return;

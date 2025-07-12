@@ -1011,6 +1011,15 @@ public interface ApexFighterConfig extends Config {
         section = combatSection
     )
     default int maxPlayersBeforeHop() { return 0; }
+
+    @ConfigItem(
+        keyName = "maxSecondsWithoutMonstersBeforeHop",
+        name = "Max Seconds Without Monsters Before Hop",
+        description = "If no monsters are found for this many seconds, hop worlds. 0 disables.",
+        position = 1002,
+        section = combatSection
+    )
+    default int maxSecondsWithoutMonstersBeforeHop() { return 0; }
 }
 
 
