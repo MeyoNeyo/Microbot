@@ -59,6 +59,7 @@ public class AttackNpcScript extends Script {
                     if (playersInArea >= config.maxPlayersBeforeHop()) {
                         long now = System.currentTimeMillis();
                         if (now - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
+                            Microbot.log("Hopping worlds: too many players in area (" + playersInArea + " >= " + config.maxPlayersBeforeHop() + ")");
                             Microbot.pauseAllScripts.set(true);
                             // Filter for safe, accessible worlds
                             net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
@@ -80,6 +81,8 @@ public class AttackNpcScript extends Script {
                                     Microbot.hopToWorld(nextWorld.getId());
                                     lastHopTime = now;
                                     return;
+                                } else {
+                                    Microbot.log("No valid worlds found to hop to.");
                                 }
                             }
                         }
@@ -106,13 +109,6 @@ public class AttackNpcScript extends Script {
                                     if (name == null || name.isEmpty()) return false;
                                     return !npcsToAttack.isEmpty() && npcsToAttack.stream().anyMatch(name::equalsIgnoreCase);
                                 })
-                                .filter(npc -> {
-                                    // Multi-tile LOS: only if safespot is enabled
-                                    if (config.toggleCenterTile()) {
-                                        return net.runelite.client.plugins.microbot.util.tile.Rs2Tile.hasLineOfSight(config.centerLocation(), npc.getWorldLocation());
-                                    }
-                                    return true;
-                                })
                                 .sorted(Comparator.comparingInt((Rs2NpcModel npc) -> Objects.equals(npc.getInteracting(), Microbot.getClient().getLocalPlayer()) ? 0 : 1)
                                         .thenComparingInt(npc -> Rs2Player.getRs2WorldPoint().distanceToPath(npc.getWorldLocation())))
                                 .collect(Collectors.toList())
@@ -135,9 +131,11 @@ public class AttackNpcScript extends Script {
                 if (config.maxSecondsWithoutMonstersBeforeHop() > 0) {
                     if (attackableNpcs.isEmpty()) {
                         long now = System.currentTimeMillis();
+                        Microbot.log("No monsters found. Waiting to hop (" + ((now - lastMonsterFoundTime)/1000) + "/" + config.maxSecondsWithoutMonstersBeforeHop() + " seconds)");
                         if (now - lastMonsterFoundTime > config.maxSecondsWithoutMonstersBeforeHop() * 1000L) {
                             long hopNow = System.currentTimeMillis();
                             if (hopNow - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
+                                Microbot.log("Hopping worlds: no monsters found for " + config.maxSecondsWithoutMonstersBeforeHop() + " seconds.");
                                 Microbot.pauseAllScripts.set(true);
                                 net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
                                 if (worldResult != null) {
@@ -157,6 +155,8 @@ public class AttackNpcScript extends Script {
                                         net.runelite.http.api.worlds.World nextWorld = safeWorlds.get(new java.util.Random().nextInt(safeWorlds.size()));
                                         Microbot.hopToWorld(nextWorld.getId());
                                         lastHopTime = hopNow;
+                                    } else {
+                                        Microbot.log("No valid worlds found to hop to.");
                                     }
                                 }
                             }
@@ -224,7 +224,7 @@ public class AttackNpcScript extends Script {
                     ApexFighterPlugin.setCooldown(config.playStyle().getRandomTickInterval());
 
                 } else {
-                    Microbot.log("No attackable NPC found");
+                    Microbot.log("Standing still: no attackable NPCs and not hopping.");
                 }
             } catch (Exception ex) {
                 Microbot.logStackTrace(this.getClass().getSimpleName(), ex);
