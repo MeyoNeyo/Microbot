@@ -14,6 +14,7 @@ import net.runelite.client.plugins.microbot.util.slayer.enums.SlayerMaster;
 @ConfigInformation("")
 public interface ApexFighterConfig extends Config {
 
+
     String GROUP = "PlayerAssistant";
 
     @ConfigSection(
@@ -1001,6 +1002,15 @@ public interface ApexFighterConfig extends Config {
     default String bankingInventoryKeep() {
         return "";
     }
+
+    @ConfigItem(
+        keyName = "maxPlayersBeforeHop",
+        name = "Max Players Before Hop",
+        description = "If the number of players in the fighting area is >= this value, hop worlds. 0 disables.",
+        position = 1001,
+        section = combatSection
+    )
+    default int maxPlayersBeforeHop() { return 0; }
 }
 
 
