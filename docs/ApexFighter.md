@@ -1,9 +1,21 @@
+
 # To Be Implemented
 
 - **Magic Rune Check:**
   - Before attacking with magic, the script should check if the player has enough runes to cast the selected spell (using `Rs2Magic.canCast` or similar).
   - If the player runs out of runes, the script should stop attacking with magic or switch to another combat style, or notify the user.
   - This feature is not yet implemented as of July 2025.
+
+- **Show Total Profit or Looted Items Value:**
+  - Display the total GP value of all looted items in the overlay, using GE prices.
+  - Optionally, show the value per hour and/or breakdown by item.
+
+- **Show Plugin Runtime:**
+  - Display how long the plugin has been running (e.g., 01:23:45) in the overlay or status panel.
+
+- **(Future) Grand Exchange Refill:**
+  - If food, ammo, runes, or equipment are depleted (including after death), automatically buy required items from the Grand Exchange and restock the bank.
+  - This feature is planned for a future update.
 
 # ApexFighter Plugin
 
