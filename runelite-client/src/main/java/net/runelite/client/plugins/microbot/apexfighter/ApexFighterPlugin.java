@@ -78,6 +78,20 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // Camera configuration flag
+    private boolean cameraConfigured = false;
+
+    /**
+     * Sets the camera to a top-down view, similar to WildyRuniteMiner.
+     */
+    private void setTopDownCameraView() {
+        if (Microbot.getClient() == null || cameraConfigured) return;
+        Microbot.getClient().setCameraPitchTarget(383);
+        Microbot.getClient().setCameraYawTarget(0);
+        Microbot.getClient().setCameraShakeDisabled(true);
+        cameraConfigured = true;
+        Microbot.status = "Camera set to top-down view.";
+    }
     // Track seconds without monsters for hop logic
     private int secondsWithoutMonsters = 0;
 
@@ -265,6 +279,8 @@ public class ApexFighterPlugin extends Plugin {
             }
             executor.shutdown();
         }, 0, 1, TimeUnit.SECONDS);
+        // Set camera to top-down view at script start, once per session
+        setTopDownCameraView();
         if (overlayManager != null) {
             overlayManager.add(playerAssistOverlay);
             overlayManager.add(playerAssistInfoOverlay);
