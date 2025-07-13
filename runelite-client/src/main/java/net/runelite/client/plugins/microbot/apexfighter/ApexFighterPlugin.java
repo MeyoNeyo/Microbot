@@ -232,15 +232,20 @@ public class ApexFighterPlugin extends Plugin {
      * Listen for ground item despawned events and track them for loot correlation.
      */
     @Subscribe
-    public void onGroundItemDespawned(ItemDespawned event) {
+    public void onItemDespawned(ItemDespawned event) {
         net.runelite.api.TileItem item = event.getItem();
         if (item == null) return;
         WorldPoint location = event.getTile().getWorldLocation();
         // Only track items within loot radius
         WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : net.runelite.client.plugins.microbot.util.player.Rs2Player.getWorldLocation();
         if (location.distanceTo(center) > config.attackRadius()) return;
-        // Item name lookup may require client API, fallback to id as name if not available
-        String itemName = String.valueOf(item.getId());
+        // Lookup item name using ItemManager
+        String itemName;
+        try {
+            itemName = Microbot.getItemManager().getItemComposition(item.getId()).getName();
+        } catch (Exception e) {
+            itemName = String.valueOf(item.getId());
+        }
         this.recentDespawnedItems.add(new DespawnedGroundItem(item.getId(), itemName, item.getQuantity(), location));
         // Clean up old entries (older than 3 seconds)
         long now = System.currentTimeMillis();
