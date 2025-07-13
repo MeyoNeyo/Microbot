@@ -1,6 +1,5 @@
 
 package net.runelite.client.plugins.microbot;
-import net.runelite.api.WorldType;
 
 import com.google.inject.Injector;
 import java.awt.Rectangle;
@@ -88,52 +87,6 @@ import org.slf4j.event.Level;
 @Slf4j
 @NoArgsConstructor
 public class Microbot {
-
-	/**
-	 * Hops to a random safe world of the same type (members/free) as the current world.
-	 * Filters out dangerous, full, and current worlds. Runs on the client thread.
-	 */
-	public static void hopWorlds() {
-		clientThread.invokeLater(() -> {
-			net.runelite.http.api.worlds.WorldResult worldResult = worldService.getWorlds();
-			if (worldResult == null) return;
-
-			int currentWorld = client.getWorld();
-			boolean isMember = client.getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
-
-			List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds().stream()
-				.filter(w -> w.getId() != currentWorld)
-				.filter(w -> w.getPlayers() < 2000) // 2000 is the typical world cap
-				.filter(w -> !w.getTypes().contains(WorldType.PVP))
-				.filter(w -> !w.getTypes().contains(WorldType.DEADMAN))
-				.filter(w -> !w.getTypes().contains(WorldType.HIGH_RISK))
-				.filter(w -> !w.getTypes().contains(WorldType.SKILL_TOTAL))
-				.filter(w -> !w.getTypes().contains(WorldType.QUEST_SPEEDRUNNING))
-				.filter(w -> !w.getTypes().contains(WorldType.PVP_ARENA))
-				.filter(w -> !w.getTypes().contains(WorldType.SEASONAL))
-				.filter(w -> !w.getTypes().contains(WorldType.BETA_WORLD))
-				.filter(w -> !w.getTypes().contains(WorldType.NOSAVE_MODE))
-				.filter(w -> !w.getTypes().contains(WorldType.TOURNAMENT_WORLD))
-				.filter(w -> !w.getTypes().contains(WorldType.FRESH_START_WORLD))
-				.filter(w -> isMember == w.getTypes().contains(WorldType.MEMBERS))
-				.collect(java.util.stream.Collectors.toList());
-
-			if (worlds.isEmpty()) return;
-
-			net.runelite.http.api.worlds.World targetWorld = worlds.get(new java.util.Random().nextInt(worlds.size()));
-
-			// Convert HTTP world to API world
-			net.runelite.api.World rsWorld = client.createWorld();
-			rsWorld.setActivity(targetWorld.getActivity());
-			rsWorld.setAddress(targetWorld.getAddress());
-			rsWorld.setId(targetWorld.getId());
-			rsWorld.setPlayerCount(targetWorld.getPlayers());
-			rsWorld.setLocation(targetWorld.getLocation());
-			rsWorld.setTypes(net.runelite.client.util.WorldUtil.toWorldTypes(targetWorld.getTypes()));
-
-			client.changeWorld(rsWorld);
-		});
-	}
 	//Version path used to load the client faster when developing by checking version number
 	//If the version is the same as the current version we do not download the latest .jar
 	//Resulting in a faster startup

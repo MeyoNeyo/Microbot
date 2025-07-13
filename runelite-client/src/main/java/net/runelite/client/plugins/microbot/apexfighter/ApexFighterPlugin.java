@@ -1,5 +1,4 @@
 package net.runelite.client.plugins.microbot.apexfighter;
-import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 import com.google.inject.Provides;
 import lombok.Getter;
@@ -7,7 +6,6 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
 import net.runelite.api.World;
-import net.runelite.api.WorldType;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ItemDespawned;
 import net.runelite.api.Item;
@@ -117,6 +115,53 @@ public class ApexFighterPlugin extends Plugin {
         }
         return total;
     }
+    /**
+     * Hops to a random safe world of the same type (members/free) as the current world.
+     * Filters out dangerous, full, and current worlds. Runs on the client thread.
+     */
+    public static void hopWorlds() {
+        Microbot.getClientThread().invokeLater(() -> {
+            net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
+            if (worldResult == null) return;
+
+            int currentWorld = Microbot.getClient().getWorld();
+            boolean isMember = Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
+
+            List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds().stream()
+                .filter(w -> w.getId() != currentWorld)
+                .filter(w -> w.getPlayers() < 2000) // 2000 is the typical world cap
+                .filter(w -> w.getTypes().stream().noneMatch(t ->
+                    t.toString().equals("PVP") ||
+                    t.toString().equals("DEADMAN") ||
+                    t.toString().equals("HIGH_RISK") ||
+                    t.toString().equals("SKILL_TOTAL") ||
+                    t.toString().equals("QUEST_SPEEDRUNNING") ||
+                    t.toString().equals("PVP_ARENA") ||
+                    t.toString().equals("SEASONAL") ||
+                    t.toString().equals("BETA_WORLD") ||
+                    t.toString().equals("NOSAVE_MODE") ||
+                    t.toString().equals("FRESH_START_WORLD")
+                ))
+                .filter(w -> isMember == w.getTypes().stream().anyMatch(t -> t.toString().equals("MEMBERS")))
+                .collect(java.util.stream.Collectors.toList());
+
+            if (worlds.isEmpty()) return;
+
+            net.runelite.http.api.worlds.World targetWorld = worlds.get(new java.util.Random().nextInt(worlds.size()));
+
+            // Convert HTTP world to API world
+            net.runelite.api.World rsWorld = Microbot.getClient().createWorld();
+            rsWorld.setActivity(targetWorld.getActivity());
+            rsWorld.setAddress(targetWorld.getAddress());
+            rsWorld.setId(targetWorld.getId());
+            rsWorld.setPlayerCount(targetWorld.getPlayers());
+            rsWorld.setLocation(targetWorld.getLocation());
+            rsWorld.setTypes(net.runelite.client.util.WorldUtil.toWorldTypes(targetWorld.getTypes()));
+
+            Microbot.getClient().changeWorld(rsWorld);
+        });
+    }
+    // ...existing code...
     // Utility: Check if player is on safespot
     public static boolean isOnSafeSpot() {
         WorldPoint safeSpot = Microbot.getConfigManager().getConfiguration(
@@ -469,10 +514,10 @@ public class ApexFighterPlugin extends Plugin {
             }
 
             if (config.maxPlayersBeforeHop() > 0 && getPlayerCountInArea() >= config.maxPlayersBeforeHop()) {
-                Microbot.hopWorlds();
+                ApexFighterPlugin.hopWorlds();
             }
             if (config.maxSecondsWithoutMonstersBeforeHop() > 0 && secondsWithoutMonsters >= config.maxSecondsWithoutMonstersBeforeHop()) {
-                Microbot.hopWorlds();
+                ApexFighterPlugin.hopWorlds();
                 secondsWithoutMonsters = 0;
             }
         } else {
