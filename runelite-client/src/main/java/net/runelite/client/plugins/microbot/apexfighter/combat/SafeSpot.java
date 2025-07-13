@@ -7,7 +7,9 @@ import net.runelite.client.plugins.microbot.apexfighter.ApexFighterConfig;
 import net.runelite.client.plugins.microbot.apexfighter.ApexFighterPlugin;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 
 import java.util.concurrent.TimeUnit;
 
@@ -31,14 +33,22 @@ public boolean run(ApexFighterConfig config) {
                 return;
             }
 
-			messageShown = false;
+            messageShown = false;
 
-			if (!isPlayerAtSafeSpot(currentSafeSpot)) {
-				Rs2Walker.walkFastCanvas(currentSafeSpot);
-				Microbot.pauseAllScripts.compareAndSet(false, true);
-				sleepUntil(() -> isPlayerAtSafeSpot(currentSafeSpot));
-				Microbot.pauseAllScripts.compareAndSet(true, false);
-			}
+            if (!isPlayerAtSafeSpot(currentSafeSpot)) {
+                // Improved logic: click if visible, pathfind if not
+                LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), currentSafeSpot);
+                if (localPoint != null && Rs2Camera.isTileOnScreen(localPoint)) {
+                    // Tile is on screen, click it directly
+                    Rs2Walker.walkCanvas(currentSafeSpot);
+                } else {
+                    // Tile is not on screen, use pathfinding
+                    Rs2Walker.walkTo(currentSafeSpot);
+                }
+                Microbot.pauseAllScripts.compareAndSet(false, true);
+                sleepUntil(() -> isPlayerAtSafeSpot(currentSafeSpot));
+                Microbot.pauseAllScripts.compareAndSet(true, false);
+            }
 
 
         } catch (Exception ex) {
