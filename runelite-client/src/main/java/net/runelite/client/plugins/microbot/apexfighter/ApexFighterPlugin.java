@@ -5,9 +5,23 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
-import net.runelite.api.*;
+import net.runelite.api.World;
+import net.runelite.api.WorldType;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.events.*;
+import net.runelite.api.events.ItemDespawned;
+import net.runelite.api.Item;
+import net.runelite.api.Hitsplat;
+import net.runelite.api.NPC;
+import net.runelite.api.MenuEntry;
+import net.runelite.api.MenuAction;
+import net.runelite.api.KeyCode;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.MenuOpened;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.worldmap.WorldMap;
 import net.runelite.client.config.ConfigManager;
@@ -18,32 +32,40 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript;
 import net.runelite.client.plugins.microbot.apexfighter.cannon.CannonScript;
-import net.runelite.client.plugins.microbot.apexfighter.combat.*;
+import net.runelite.client.plugins.microbot.apexfighter.combat.AttackNpcScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.BuryScatterScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.FlickerScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.FoodScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.HighAlchScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.PotionManagerScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.PrayerScript;
+import net.runelite.client.plugins.microbot.apexfighter.combat.SafeSpot;
+import net.runelite.client.plugins.microbot.apexfighter.combat.UseSpecialAttackScript;
 import net.runelite.client.plugins.microbot.apexfighter.enums.PrayerStyle;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
+import net.runelite.client.plugins.microbot.apexfighter.LootEntry;
 import net.runelite.client.plugins.microbot.apexfighter.loot.LootScript;
 import net.runelite.client.plugins.microbot.apexfighter.safety.SafetyScript;
 import net.runelite.client.plugins.microbot.apexfighter.skill.AttackStyleScript;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.grounditems.GroundItem;
 import net.runelite.client.ui.JagexColors;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ColorUtil;
 import net.runelite.client.util.Text;
-
 import javax.inject.Inject;
 import java.awt.*;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -70,7 +92,8 @@ public class ApexFighterPlugin extends Plugin {
     // Track previous state to filter out banking/food
     private State previousState = null;
     // For event-based loot tracking
-    private volatile PendingLoot pendingLoot = null;
+    private final java.util.List<DespawnedGroundItem> recentDespawnedItems = new java.util.ArrayList<>();
+    private final Map<Integer, Integer> previousInventory = new HashMap<>();
     public static final String version = "1.3.1";
     private static final String SET = "Set";
     private static final String CENTER_TILE = ColorUtil.wrapWithColorTag("Center Tile", JagexColors.MENU_TARGET);
@@ -86,14 +109,14 @@ public class ApexFighterPlugin extends Plugin {
     // Loot tracking: itemId -> LootEntry (stores name and quantity)
     public static final Map<Integer, LootEntry> sessionLoot = new ConcurrentHashMap<>();
 
-    // Helper class to track pending loot pickup
-    private static class PendingLoot {
+    // Helper class to track recently despawned ground items
+    private static class DespawnedGroundItem {
         final int itemId;
         final String itemName;
         final int quantity;
         final WorldPoint location;
         final long timestamp;
-        PendingLoot(int itemId, String itemName, int quantity, WorldPoint location) {
+        DespawnedGroundItem(int itemId, String itemName, int quantity, WorldPoint location) {
             this.itemId = itemId;
             this.itemName = itemName;
             this.quantity = quantity;
@@ -136,8 +159,14 @@ public class ApexFighterPlugin extends Plugin {
     @Override
     protected void startUp() throws AWTException {
         sessionLoot.clear();
-        pendingLoot = null;
         previousState = null;
+        previousInventory.clear();
+        for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
+            if (item.getId() > 0) {
+                previousInventory.put(item.getId(), item.getQuantity());
+            }
+        }
+        recentDespawnedItems.clear();
         Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -200,63 +229,64 @@ public class ApexFighterPlugin extends Plugin {
     }
 
     /**
-     * Listen for inventory changes and update loot tracking if a new item is added after looting.
-     * Only count as loot if the item was picked up from the ground within the configured radius.
+     * Listen for ground item despawned events and track them for loot correlation.
      */
     @Subscribe
-    public void onItemContainerChanged(ItemContainerChanged event) {
-        // Use 93 (InventoryID.INVENTORY.getId()) directly to avoid deprecated field
-        if (event.getContainerId() != 93) return;
-        if (!Microbot.isLoggedIn()) return;
-        if (pendingLoot == null) return;
-
-        // Check if the item is now in inventory
-        int count = 0;
-        for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
-            if (item.getId() == pendingLoot.itemId) {
-                count += item.getQuantity();
-            }
-        }
-        if (count >= pendingLoot.quantity) {
-            // Check if the pickup was within the allowed radius
-            WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
-            int radius = config.attackRadius();
-            if (pendingLoot.location != null && center != null && pendingLoot.location.distanceTo(center) <= radius) {
-                sessionLoot.compute(pendingLoot.itemId, (id, lootEntry) -> {
-                    String itemName = pendingLoot.itemName;
-                    if (lootEntry == null) return new LootEntry(id, itemName, pendingLoot.quantity);
-                    lootEntry.addQuantity(pendingLoot.quantity);
-                    return lootEntry;
-                });
-            }
-            pendingLoot = null;
-        }
+    public void onGroundItemDespawned(ItemDespawned event) {
+        net.runelite.api.TileItem item = event.getItem();
+        if (item == null) return;
+        WorldPoint location = event.getTile().getWorldLocation();
+        // Only track items within loot radius
+        WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : net.runelite.client.plugins.microbot.util.player.Rs2Player.getWorldLocation();
+        if (location.distanceTo(center) > config.attackRadius()) return;
+        // Item name lookup may require client API, fallback to id as name if not available
+        String itemName = String.valueOf(item.getId());
+        this.recentDespawnedItems.add(new DespawnedGroundItem(item.getId(), itemName, item.getQuantity(), location));
+        // Clean up old entries (older than 3 seconds)
+        long now = System.currentTimeMillis();
+        this.recentDespawnedItems.removeIf(i -> now - i.timestamp > 3000);
     }
 
     /**
-     * Listen for menu option clicks to detect when the player attempts to pick up a ground item.
+     * Listen for inventory changes and update loot tracking if a new item is added after looting.
      */
     @Subscribe
-    public void onMenuOptionClicked(MenuOptionClicked event) {
+    public void onItemContainerChanged(ItemContainerChanged event) {
+        if (event.getContainerId() != 93) return; // Inventory
         if (!Microbot.isLoggedIn()) return;
-        String option = event.getMenuOption();
-        if (option == null) return;
-        if (!option.equalsIgnoreCase("Take") && !option.equalsIgnoreCase("Pick up")) return;
 
-        // Get item id and name
-        int itemId = event.getId();
-        String itemName = event.getMenuTarget();
-        if (itemName != null) itemName = net.runelite.client.util.Text.removeTags(itemName);
-        else itemName = String.valueOf(itemId);
+        Map<Integer, Integer> currentInventory = new HashMap<>();
+        for (net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
+            if (item.getId() > 0) {
+                currentInventory.merge(item.getId(), item.getQuantity(), Integer::sum);
+            }
+        }
 
-        // Get world location of the ground item
-        int x = event.getParam0();
-        int y = event.getParam1();
-        int z = Microbot.getClient().getPlane();
-        WorldPoint location = new WorldPoint(x, y, z);
+        // Compare to previous inventory
+        for (Map.Entry<Integer, Integer> entry : currentInventory.entrySet()) {
+            int itemId = entry.getKey();
+            int newQty = entry.getValue();
+            int oldQty = previousInventory.getOrDefault(itemId, 0);
+            int diff = newQty - oldQty;
+            if (diff > 0) {
+                // See if this matches a recent despawned ground item
+                DespawnedGroundItem match = this.recentDespawnedItems.stream()
+                    .filter(i -> i.itemId == itemId && i.quantity == diff)
+                    .findFirst().orElse(null);
+                if (match != null) {
+                    sessionLoot.compute(itemId, (id, lootEntry) -> {
+                        String itemName = match.itemName;
+                        if (lootEntry == null) return new LootEntry(id, itemName, diff);
+                        lootEntry.addQuantity(diff);
+                        return lootEntry;
+                    });
+                    this.recentDespawnedItems.remove(match);
+                }
+            }
+        }
 
-        // Track this as a pending loot pickup
-        pendingLoot = new PendingLoot(itemId, itemName, 1, location);
+        previousInventory.clear();
+        previousInventory.putAll(currentInventory);
     }
     public static void resetLocation() {
         setCenter(new WorldPoint(0, 0, 0));
@@ -401,10 +431,10 @@ public class ApexFighterPlugin extends Plugin {
     }
     @Subscribe
     private void onMenuEntryAdded(MenuEntryAdded event) {
-        if (Microbot.getClient().isKeyPressed(KeyCode.KC_SHIFT) && event.getOption().equals(WALK_HERE) && event.getTarget().isEmpty() && config.toggleCenterTile()) {
+        if (Microbot.getClient().isKeyPressed(net.runelite.api.KeyCode.KC_SHIFT) && event.getOption().equals(WALK_HERE) && event.getTarget().isEmpty() && config.toggleCenterTile()) {
             addMenuEntry(event, SET, CENTER_TILE, 1);
         }
-        if (Microbot.getClient().isKeyPressed(KeyCode.KC_SHIFT) && event.getOption().equals(WALK_HERE) && event.getTarget().isEmpty()) {
+        if (Microbot.getClient().isKeyPressed(net.runelite.api.KeyCode.KC_SHIFT) && event.getOption().equals(WALK_HERE) && event.getTarget().isEmpty()) {
             addMenuEntry(event, SET, SAFE_SPOT, 1);
         }
         if (event.getOption().equals(ATTACK) && config.attackableNpcs().contains(getNpcNameFromMenuEntry(Text.removeTags(event.getTarget())))) {
@@ -472,7 +502,7 @@ public class ApexFighterPlugin extends Plugin {
         return null;
     }
     private void addMenuEntry(MenuEntryAdded event, String option, String target, int position) {
-        List<MenuEntry> entries = new LinkedList<>(Arrays.asList(Microbot.getClient().getMenuEntries()));
+        java.util.List<MenuEntry> entries = new java.util.LinkedList<>(java.util.Arrays.asList(Microbot.getClient().getMenuEntries()));
         if (entries.stream().anyMatch(e -> e.getOption().equals(option) && e.getTarget().equals(target))) {
             return;
         }
