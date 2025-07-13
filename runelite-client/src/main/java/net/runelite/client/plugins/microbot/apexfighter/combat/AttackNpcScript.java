@@ -48,6 +48,11 @@ public class AttackNpcScript extends Script {
 
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
+                // Prevent attacking if a world hop is in progress
+                if (Microbot.isHopping()) {
+                    Microbot.status = "World hopping in progress";
+                    return;
+                }
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
                     return;
                 // World hopping logic based on player count in area
