@@ -47,6 +47,11 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
 
             // --- Loot Tracking Overlay ---
             if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
+                long totalValue = ApexFighterPlugin.getTotalLootValue();
+                panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Total Loot Value:")
+                    .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
+                    .build());
                 panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());
                 for (LootEntry entry : ApexFighterPlugin.sessionLoot.values()) {
                     panelComponent.getChildren().add(LineComponent.builder()

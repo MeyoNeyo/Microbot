@@ -79,6 +79,25 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // Helper to format GP values for overlay
+    public static String formatGp(long gp) {
+        if (gp >= 1_000_000) return String.format("%.2fM", gp / 1_000_000.0);
+        if (gp >= 1_000) return String.format("%.1fk", gp / 1_000.0);
+        return String.valueOf(gp);
+    }
+
+    // Calculate total loot value (GE price)
+    public static long getTotalLootValue() {
+        long total = 0;
+        for (LootEntry entry : sessionLoot.values()) {
+            int price = 0;
+            try {
+                price = Microbot.getItemManager().getItemPrice(entry.getItemId());
+            } catch (Exception ignored) {}
+            total += (long) price * entry.getQuantity();
+        }
+        return total;
+    }
     // Utility: Check if player is on safespot
     public static boolean isOnSafeSpot() {
         WorldPoint safeSpot = Microbot.getConfigManager().getConfiguration(
