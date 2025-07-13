@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.moonsOfPeril.handlers;
 
 import net.runelite.api.*;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.ObjectID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.moonsOfPeril.enums.Widgets;
 import net.runelite.client.plugins.microbot.moonsOfPeril.moonsOfPerilConfig;
@@ -199,13 +200,7 @@ public final class BossHandler {
 
     /** True if the WorldPoint param is located on a dangerous tile*/
     public static boolean inDanger(WorldPoint location) {
-        if (Rs2Tile.dangerousGraphicsObjectTiles.stream()
-                .filter(p -> p.getValue() > 0)
-                .map(p -> p.getKey())
-                .anyMatch(pt -> pt.equals(location))) {
-            return true;
-        }
-        return false;
+        return Rs2Tile.getDangerousGraphicsObjectTiles().containsKey(location);
     }
 
     /** Runs the player out of the arena */
@@ -225,5 +220,13 @@ public final class BossHandler {
             sleep(600);
         }
         if (debugLogging) {Microbot.log("Timeout: Failed to bail out of the boss arena after 10 seconds.");}
+    }
+
+    /** If current run energy is less than 80%, recharges run energy at a campfire located on the world canvas */
+    public static void rechargeRunEnergy() {
+        if (Rs2GameObject.getGameObject(ObjectID.PMOON_RANGE) != null && Rs2Player.getRunEnergy() <=80) {
+            Rs2GameObject.interact(ObjectID.PMOON_RANGE, "Make-cuppa");
+            sleep(600);
+        }
     }
 }
