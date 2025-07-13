@@ -1,5 +1,10 @@
 # To Be Implemented
 
+- **Safespot Manual Coordinate Textbox:**
+  - Add a textbox in the plugin settings to allow users to manually enter safespot coordinates (similar to the manual center tile/area input).
+  - This will let users specify the safespot location directly by entering X, Y, and plane values.
+  - Not yet implemented as of July 2025.
+
 - **Magic Rune Check:**
   - Before attacking with magic, the script should check if the player has enough runes to cast the selected spell (using `Rs2Magic.canCast` or similar).
   - If the player runs out of runes, the script should stop attacking with magic or switch to another combat style, or notify the user.

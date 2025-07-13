@@ -1,5 +1,4 @@
 package net.runelite.client.plugins.microbot.apexfighter.combat;
-
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
@@ -10,7 +9,6 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-
 import java.util.concurrent.TimeUnit;
 
 public class SafeSpot extends Script {

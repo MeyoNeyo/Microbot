@@ -50,19 +50,6 @@ public class AttackNpcScript extends Script {
             try {
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
                     return;
-
-                // Safespot logic: if enabled and set, walk to safespot if not in combat
-                if (config.toggleSafeSpot()) {
-                    WorldPoint safeSpot = config.safeSpot();
-                    if (safeSpot != null && !safeSpot.equals(new WorldPoint(0, 0, 0))) {
-                        if (!Rs2Combat.inCombat() && !ApexFighterPlugin.isOnSafeSpot()) {
-                            net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkTo(safeSpot);
-                            Microbot.status = "Walking to safespot";
-                            return;
-                        }
-                    }
-                }
-
                 // World hopping logic based on player count in area
                 if (config.maxPlayersBeforeHop() > 0 && attackableArea != null) {
                     long playersInArea = net.runelite.client.plugins.microbot.util.player.Rs2Player.getPlayers(
