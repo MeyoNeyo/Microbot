@@ -1,4 +1,5 @@
 package net.runelite.client.plugins.microbot.apexfighter;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 import com.google.inject.Provides;
 import lombok.Getter;
@@ -79,6 +80,24 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // Track seconds without monsters for hop logic
+    private int secondsWithoutMonsters = 0;
+
+    // Helper to count players in the area
+    private int getPlayerCountInArea() {
+        WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
+        return (int) Microbot.getClient().getTopLevelWorldView().players().stream()
+            .filter(p -> p.getWorldLocation().distanceTo(center) <= config.attackRadius())
+            .count();
+    }
+    /**
+     * Returns true if the player is inside the configured target area (center + attack radius).
+     */
+    public boolean isPlayerInTargetArea() {
+        WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
+        return playerLoc.distanceTo(center) <= config.attackRadius();
+    }
     // Helper to format GP values for overlay
     public static String formatGp(long gp) {
         if (gp >= 1_000_000) return String.format("%.2fM", gp / 1_000_000.0);
@@ -432,6 +451,33 @@ public class ApexFighterPlugin extends Plugin {
             cooldown--;
         if(config.togglePrayer())
             flickerScript.onGameTick();
+
+        // --- Robust hop logic ---
+        if (isPlayerInTargetArea()) {
+            // Count monsters in area
+            int monstersInArea = (int) Microbot.getClient().getTopLevelWorldView().npcs().stream()
+                .filter(npc -> config.attackableNpcs().contains(npc.getName()))
+                .filter(npc -> npc.getWorldLocation().distanceTo(
+                    config.toggleCenterTile() ? config.centerLocation() : net.runelite.client.plugins.microbot.util.player.Rs2Player.getWorldLocation()
+                ) <= config.attackRadius())
+                .count();
+
+            if (monstersInArea == 0) {
+                secondsWithoutMonsters++;
+            } else {
+                secondsWithoutMonsters = 0;
+            }
+
+            if (config.maxPlayersBeforeHop() > 0 && getPlayerCountInArea() >= config.maxPlayersBeforeHop()) {
+                Microbot.hopWorlds();
+            }
+            if (config.maxSecondsWithoutMonstersBeforeHop() > 0 && secondsWithoutMonsters >= config.maxSecondsWithoutMonstersBeforeHop()) {
+                Microbot.hopWorlds();
+                secondsWithoutMonsters = 0;
+            }
+        } else {
+            secondsWithoutMonsters = 0;
+        }
     }
     @Subscribe
     public void onNpcDespawned(NpcDespawned npcDespawned) {
@@ -484,7 +530,7 @@ public class ApexFighterPlugin extends Plugin {
         if (Microbot.getClient().getWidget(WORLD_MAP_MAPVIEW_ID) == null) {
             WorldPoint result = null;
             if (Microbot.getClient().getSelectedSceneTile() != null) {
-                if (Microbot.getClient().isInInstancedRegion()) {
+                if (Microbot.getClient().getTopLevelWorldView().isInstance()) {
                     result = WorldPoint.fromLocalInstance(Microbot.getClient(), Microbot.getClient().getSelectedSceneTile().getLocalLocation());
                 } else {
                     result = Microbot.getClient().getSelectedSceneTile().getWorldLocation();
@@ -526,11 +572,11 @@ public class ApexFighterPlugin extends Plugin {
         return null;
     }
     private void addMenuEntry(MenuEntryAdded event, String option, String target, int position) {
-        java.util.List<MenuEntry> entries = new java.util.LinkedList<>(java.util.Arrays.asList(Microbot.getClient().getMenuEntries()));
+        java.util.List<MenuEntry> entries = new java.util.LinkedList<>(java.util.Arrays.asList(Microbot.getClient().getMenu().getMenuEntries()));
         if (entries.stream().anyMatch(e -> e.getOption().equals(option) && e.getTarget().equals(target))) {
             return;
         }
-        Microbot.getClient().createMenuEntry(position)
+        Microbot.getClient().getMenu().createMenuEntry(position)
             .setOption(option)
             .setTarget(target)
             .setParam0(event.getActionParam0())
