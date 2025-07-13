@@ -57,6 +57,16 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // Utility: Check if player is on safespot
+    public static boolean isOnSafeSpot() {
+        WorldPoint safeSpot = Microbot.getConfigManager().getConfiguration(
+                "PlayerAssistant",
+                "safeSpotLocation",
+                WorldPoint.class
+        );
+        return safeSpot != null && !safeSpot.equals(new WorldPoint(0, 0, 0)) &&
+                net.runelite.client.plugins.microbot.util.player.Rs2Player.getWorldLocation().equals(safeSpot);
+    }
     // Track previous state to filter out banking/food
     private State previousState = null;
     // For event-based loot tracking

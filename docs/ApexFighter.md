@@ -1,3 +1,10 @@
+# To Be Implemented
+
+- **Magic Rune Check:**
+  - Before attacking with magic, the script should check if the player has enough runes to cast the selected spell (using `Rs2Magic.canCast` or similar).
+  - If the player runs out of runes, the script should stop attacking with magic or switch to another combat style, or notify the user.
+  - This feature is not yet implemented as of July 2025.
+
 # ApexFighter Plugin
 
 ## Overview
