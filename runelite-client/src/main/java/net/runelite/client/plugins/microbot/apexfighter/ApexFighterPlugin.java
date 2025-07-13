@@ -59,8 +59,8 @@ import java.util.stream.Collectors;
 public class ApexFighterPlugin extends Plugin {
     // Track previous state to filter out banking/food
     private State previousState = null;
-    // Track previous inventory for loot diffing
-    private final Map<Integer, Integer> previousInventory = new ConcurrentHashMap<>();
+    // For event-based loot tracking
+    private volatile PendingLoot pendingLoot = null;
     public static final String version = "1.3.1";
     private static final String SET = "Set";
     private static final String CENTER_TILE = ColorUtil.wrapWithColorTag("Center Tile", JagexColors.MENU_TARGET);
@@ -75,6 +75,22 @@ public class ApexFighterPlugin extends Plugin {
     public static int cooldown = 0;
     // Loot tracking: itemId -> LootEntry (stores name and quantity)
     public static final Map<Integer, LootEntry> sessionLoot = new ConcurrentHashMap<>();
+
+    // Helper class to track pending loot pickup
+    private static class PendingLoot {
+        final int itemId;
+        final String itemName;
+        final int quantity;
+        final WorldPoint location;
+        final long timestamp;
+        PendingLoot(int itemId, String itemName, int quantity, WorldPoint location) {
+            this.itemId = itemId;
+            this.itemName = itemName;
+            this.quantity = quantity;
+            this.location = location;
+            this.timestamp = System.currentTimeMillis();
+        }
+    }
     private final CannonScript cannonScript = new CannonScript();
     private final AttackNpcScript attackNpc = new AttackNpcScript();
     private final FoodScript foodScript = new FoodScript();
@@ -110,14 +126,8 @@ public class ApexFighterPlugin extends Plugin {
     @Override
     protected void startUp() throws AWTException {
         sessionLoot.clear();
-        previousInventory.clear();
+        pendingLoot = null;
         previousState = null;
-        // Initialize previousInventory with current inventory so only new pickups are tracked
-        for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
-            if (item.getId() > 0) {
-                previousInventory.put(item.getId(), item.getQuantity());
-            }
-        }
         Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -181,48 +191,62 @@ public class ApexFighterPlugin extends Plugin {
 
     /**
      * Listen for inventory changes and update loot tracking if a new item is added after looting.
+     * Only count as loot if the item was picked up from the ground within the configured radius.
      */
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event) {
         // Use 93 (InventoryID.INVENTORY.getId()) directly to avoid deprecated field
         if (event.getContainerId() != 93) return;
         if (!Microbot.isLoggedIn()) return;
+        if (pendingLoot == null) return;
 
-        // Build current inventory map
-        Map<Integer, Integer> currentInventory = new ConcurrentHashMap<>();
+        // Check if the item is now in inventory
+        int count = 0;
         for (Rs2ItemModel item : net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.all()) {
-            if (item.getId() <= 0) continue;
-            currentInventory.merge(item.getId(), item.getQuantity(), Integer::sum);
-        }
-
-        // Only add loot if previous state was not BANKING or WALKING
-        if (previousState != State.BANKING && previousState != State.WALKING) {
-            for (Map.Entry<Integer, Integer> entry : currentInventory.entrySet()) {
-                int itemId = entry.getKey();
-                int newQty = entry.getValue();
-                int oldQty = previousInventory.getOrDefault(itemId, 0);
-                int diff = newQty - oldQty;
-                if (diff > 0) {
-                    sessionLoot.compute(itemId, (id, lootEntry) -> {
-                        String itemName;
-                        Rs2ItemModel itemModel = net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.get(itemId);
-                        if (itemModel != null && itemModel.getName() != null) {
-                            itemName = itemModel.getName();
-                        } else {
-                            itemName = String.valueOf(itemId);
-                        }
-                        if (lootEntry == null) return new LootEntry(id, itemName, diff);
-                        lootEntry.addQuantity(diff);
-                        return lootEntry;
-                    });
-                }
+            if (item.getId() == pendingLoot.itemId) {
+                count += item.getQuantity();
             }
         }
+        if (count >= pendingLoot.quantity) {
+            // Check if the pickup was within the allowed radius
+            WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
+            int radius = config.attackRadius();
+            if (pendingLoot.location != null && center != null && pendingLoot.location.distanceTo(center) <= radius) {
+                sessionLoot.compute(pendingLoot.itemId, (id, lootEntry) -> {
+                    String itemName = pendingLoot.itemName;
+                    if (lootEntry == null) return new LootEntry(id, itemName, pendingLoot.quantity);
+                    lootEntry.addQuantity(pendingLoot.quantity);
+                    return lootEntry;
+                });
+            }
+            pendingLoot = null;
+        }
+    }
 
-        // Update previous inventory and state
-        previousInventory.clear();
-        previousInventory.putAll(currentInventory);
-        previousState = getState();
+    /**
+     * Listen for menu option clicks to detect when the player attempts to pick up a ground item.
+     */
+    @Subscribe
+    public void onMenuOptionClicked(MenuOptionClicked event) {
+        if (!Microbot.isLoggedIn()) return;
+        String option = event.getMenuOption();
+        if (option == null) return;
+        if (!option.equalsIgnoreCase("Take") && !option.equalsIgnoreCase("Pick up")) return;
+
+        // Get item id and name
+        int itemId = event.getId();
+        String itemName = event.getMenuTarget();
+        if (itemName != null) itemName = net.runelite.client.util.Text.removeTags(itemName);
+        else itemName = String.valueOf(itemId);
+
+        // Get world location of the ground item
+        int x = event.getParam0();
+        int y = event.getParam1();
+        int z = Microbot.getClient().getPlane();
+        WorldPoint location = new WorldPoint(x, y, z);
+
+        // Track this as a pending loot pickup
+        pendingLoot = new PendingLoot(itemId, itemName, 1, location);
     }
     public static void resetLocation() {
         setCenter(new WorldPoint(0, 0, 0));

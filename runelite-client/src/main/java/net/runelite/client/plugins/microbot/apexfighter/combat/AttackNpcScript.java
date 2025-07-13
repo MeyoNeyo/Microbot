@@ -60,7 +60,6 @@ public class AttackNpcScript extends Script {
                         long now = System.currentTimeMillis();
                         if (now - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
                             Microbot.log("Hopping worlds: too many players in area (" + playersInArea + " >= " + config.maxPlayersBeforeHop() + ")");
-                            Microbot.pauseAllScripts.set(true);
                             // Filter for safe, accessible worlds
                             net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
                             if (worldResult != null) {
@@ -136,7 +135,6 @@ public class AttackNpcScript extends Script {
                             long hopNow = System.currentTimeMillis();
                             if (hopNow - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
                                 Microbot.log("Hopping worlds: no monsters found for " + config.maxSecondsWithoutMonstersBeforeHop() + " seconds.");
-                                Microbot.pauseAllScripts.set(true);
                                 net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
                                 if (worldResult != null) {
                                     List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds();

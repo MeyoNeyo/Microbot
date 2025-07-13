@@ -153,6 +153,7 @@ public interface ApexFighterConfig extends Config {
         return false;
     }
 
+
     //PlayStyle
     @ConfigItem(
             keyName = "PlayStyle",

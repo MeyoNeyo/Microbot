@@ -26,10 +26,6 @@ import java.util.stream.Collectors;
 
 public abstract class Rs2Tile implements Tile {
 
-    /**
-     * Checks if there is a clear line of sight (no obstacles) between two tiles using Bresenham's algorithm.
-     * Only checks walkability for each tile along the path.
-     */
 
     @Getter
     public static List<MutablePair<WorldPoint, Integer>> dangerousGraphicsObjectTiles = new ArrayList<>();
