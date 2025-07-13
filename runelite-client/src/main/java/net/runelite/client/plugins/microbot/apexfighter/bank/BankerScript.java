@@ -84,7 +84,21 @@ public class BankerScript extends Script {
     }
 
     public boolean needsBanking() {
-        // Check default upkeep items
+        // 1. Food priority: if food is missing, bank immediately
+        boolean foodDepleted = false;
+        for (ItemToKeep item : ItemToKeep.values()) {
+            if (item.name().equals("FOOD") && item.isEnabled(config)) {
+                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+                if (count == 0) {
+                    foodDepleted = true;
+                    log.info("[needsBanking] Food depleted");
+                    break;
+                }
+            }
+        }
+        if (foodDepleted) return true;
+
+        // 2. Then check other upkeep/custom items as before
         boolean defaultDepleted = isUpkeepItemDepleted(config);
         boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
         if (defaultDepleted) {
@@ -93,7 +107,6 @@ public class BankerScript extends Script {
         if (slotDepleted) {
             log.info("[needsBanking] Not enough empty slots (empty: {}, minFree: {})", Rs2Inventory.emptySlotCount(), config.minFreeSlots());
         }
-        // Only check custom keep items if we already need to bank for default upkeep or slots
         boolean customDepleted = false;
         if ((defaultDepleted || slotDepleted) && config.bank()) {
             Map<String, Integer> keepItems = parseBankingInventoryKeep(config.bankingInventoryKeep());
@@ -161,17 +174,14 @@ public class BankerScript extends Script {
             String itemName = entry.getKey();
             Integer requiredAmount = entry.getValue();
             int currentAmount = Rs2Inventory.count(itemName);
-            if (requiredAmount != null && requiredAmount == Integer.MAX_VALUE) {
-                // Withdraw all of this item
+            if (requiredAmount == null) {
+                // Withdraw all of this item if not already in inventory
                 int inBank = Rs2Bank.count(itemName);
-                if (inBank > 0) {
+                if (inBank > 0 && currentAmount < inBank) {
                     Rs2Bank.withdrawAll(true, itemName);
                 }
-            } else if (requiredAmount != null && currentAmount < requiredAmount) {
+            } else if (currentAmount < requiredAmount) {
                 Rs2Bank.withdrawX(true, itemName, requiredAmount - currentAmount);
-            } else if (requiredAmount == null && currentAmount == 0) {
-                // If no amount specified, always take 1
-                Rs2Bank.withdrawX(true, itemName, 1);
             }
         }
         return !isUpkeepItemDepleted(config);
@@ -257,7 +267,7 @@ public class BankerScript extends Script {
                 String name = parts[0].trim();
                 String amountStr = parts[1].trim();
                 if (amountStr.equalsIgnoreCase("all")) {
-                    result.put(name, Integer.MAX_VALUE);
+                    result.put(name, null); // null means 'at least 1'
                 } else {
                     try {
                         int amount = Integer.parseInt(amountStr);
