@@ -78,18 +78,8 @@ public class LootScript extends Script {
 
     private void lootBones(ApexFighterConfig config) {
         if (config.toggleBuryBones()) {
-            LootingParameters bonesParams = new LootingParameters(
-                    config.attackRadius(),
-                    1,
-                    1,
-                    minFreeSlots,
-                    config.toggleDelayedLooting(),
-                    config.toggleOnlyLootMyItems(),
-                    "bones"
-            );
-            if (Rs2GroundItem.lootItemsBasedOnNames(bonesParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
-            }
+            // Only bury bones already in inventory, do not pick up from ground
+            Rs2Inventory.getBones().forEach(bone -> Rs2Inventory.interact(bone, "Bury"));
         }
     }
 
