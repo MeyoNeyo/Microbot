@@ -180,13 +180,13 @@ public class BankerScript extends Script {
             String itemName = entry.getKey();
             Integer requiredAmount = entry.getValue();
             int currentAmount = Rs2Inventory.count(itemName);
-            if (requiredAmount == null) {
+            if (requiredAmount != null && requiredAmount == Integer.MAX_VALUE) {
                 // Withdraw all of this item if not already in inventory
                 int inBank = Rs2Bank.count(itemName);
                 if (inBank > 0 && currentAmount < inBank) {
                     Rs2Bank.withdrawAll(true, itemName);
                 }
-            } else if (currentAmount < requiredAmount) {
+            } else if (requiredAmount != null && currentAmount < requiredAmount) {
                 Rs2Bank.withdrawX(true, itemName, requiredAmount - currentAmount);
             }
         }
@@ -213,7 +213,7 @@ public class BankerScript extends Script {
             int totalInInventory = inventoryItems.stream().mapToInt(Rs2ItemModel::getQuantity).sum();
             if (keepAmount == null) keepAmount = 1;
             // If keepAmount is Integer.MAX_VALUE, keep all (deposit none)
-            int toDeposit = (keepAmount == Integer.MAX_VALUE) ? 0 : totalInInventory - keepAmount;
+            int toDeposit = (keepAmount != null && keepAmount == Integer.MAX_VALUE) ? 0 : totalInInventory - keepAmount;
             if (toDeposit > 0 && !inventoryItems.isEmpty()) {
                 Rs2Bank.depositX(inventoryItems.get(0).getId(), toDeposit);
             }
@@ -273,17 +273,17 @@ public class BankerScript extends Script {
                 String name = parts[0].trim();
                 String amountStr = parts[1].trim();
                 if (amountStr.equalsIgnoreCase("all")) {
-                    result.put(name, null); // null means 'at least 1'
+                    result.put(name, Integer.MAX_VALUE); // Integer.MAX_VALUE means 'all'
                 } else {
                     try {
                         int amount = Integer.parseInt(amountStr);
                         result.put(name, amount);
                     } catch (NumberFormatException e) {
-                        result.put(name, null); // fallback if amount is invalid
+                        result.put(name, 1); // fallback if amount is invalid
                     }
                 }
             } else {
-                result.put(item, null);
+                result.put(item, 1);
             }
         }
         return result;

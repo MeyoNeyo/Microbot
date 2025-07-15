@@ -285,8 +285,23 @@ public class ApexFighterPlugin extends Plugin {
             overlayManager.add(playerAssistOverlay);
             overlayManager.add(playerAssistInfoOverlay);
         }
-        if (!config.toggleCenterTile() && Microbot.isLoggedIn())
+        // Ensure centerLocation is set from manualCenterTileCoords if needed
+        if (config.toggleCenterTile() && Microbot.isLoggedIn()) {
+            String coords = config.manualCenterTileCoords();
+            if (coords != null && !coords.isEmpty()) {
+                String[] parts = coords.split(",");
+                if (parts.length == 3) {
+                    try {
+                        int x = Integer.parseInt(parts[0].trim());
+                        int y = Integer.parseInt(parts[1].trim());
+                        int z = Integer.parseInt(parts[2].trim());
+                        setCenter(new WorldPoint(x, y, z));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        } else if (!config.toggleCenterTile() && Microbot.isLoggedIn()) {
             setCenter(Rs2Player.getWorldLocation());
+        }
         lootScript.run(config);
         cannonScript.run(config);
         attackNpc.run(config);
