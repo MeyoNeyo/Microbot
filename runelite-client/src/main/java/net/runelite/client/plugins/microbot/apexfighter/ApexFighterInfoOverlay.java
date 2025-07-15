@@ -17,10 +17,12 @@ import java.util.Map;
 
 public class ApexFighterInfoOverlay extends OverlayPanel {
     private final ApexFighterConfig config;
+    private final ApexFighterPlugin plugin;
 
     @Inject
     ApexFighterInfoOverlay(ApexFighterPlugin plugin, ApexFighterConfig config) {
         super(plugin);
+        this.plugin = plugin;
         this.config = config;
         setPosition(OverlayPosition.TOP_LEFT);
         setNaughty();
@@ -38,6 +40,12 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Play Style: " + config.playStyle() + "(" + config.playStyle().getPrimaryTickInterval() + "," + config.playStyle().getSecondaryTickInterval() + ")")
                     .right("Attack cooldown: " + ApexFighterPlugin.getCooldown())
+                    .build());
+
+            // --- Runtime Overlay ---
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Runtime:")
+                    .right(plugin.getTimeRunning())
                     .build());
             panelComponent.getChildren().add(LineComponent.builder().build());
             panelComponent.getChildren().add(LineComponent.builder()

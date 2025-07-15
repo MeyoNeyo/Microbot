@@ -78,6 +78,20 @@ import java.util.stream.Collectors;
 @Slf4j
 
 public class ApexFighterPlugin extends Plugin {
+    // --- Plugin Runtime Timer ---
+    private java.time.Instant startTime = null;
+
+    /**
+     * Returns formatted runtime since plugin start, or 00:00:00 if not running.
+     */
+    public String getTimeRunning() {
+        if (startTime == null) return "00:00:00";
+        java.time.Duration duration = java.time.Duration.between(startTime, java.time.Instant.now());
+        long hours = duration.toHours();
+        long minutes = duration.toMinutesPart();
+        long seconds = duration.toSecondsPart();
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds);
+    }
     // Camera configuration flag
     private boolean cameraConfigured = false;
 
@@ -255,6 +269,7 @@ public class ApexFighterPlugin extends Plugin {
     }
     @Override
     protected void startUp() throws AWTException {
+        startTime = java.time.Instant.now();
         sessionLoot.clear();
         previousState = null;
         previousInventory.clear();
@@ -321,6 +336,7 @@ public class ApexFighterPlugin extends Plugin {
     }
     @Override
     protected void shutDown() {
+        startTime = null;
         sessionLoot.clear();
         lootScript.shutdown();
         cannonScript.shutdown();
