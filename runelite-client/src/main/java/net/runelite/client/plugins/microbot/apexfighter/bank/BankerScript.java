@@ -67,8 +67,14 @@ public class BankerScript extends Script {
                 if (!Microbot.isLoggedIn()) return;
                 if (config.bank() && needsBanking()) {
                     // Removed eatFoodForSpace logic; FoodScript handles eating
-                    if(handleBanking()){
-                        ApexFighterPlugin.setState(State.IDLE);
+                    if (handleBanking()) {
+                        // After banking, walk to center if not already there
+                        if (config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius()) {
+                            ApexFighterPlugin.setState(State.WALKING);
+                            Rs2Walker.walkTo(config.centerLocation());
+                        } else {
+                            ApexFighterPlugin.setState(State.IDLE);
+                        }
                     }
                 } else if (!needsBanking() && config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius() && !Objects.equals(config.centerLocation(), new WorldPoint(0, 0, 0))) {
                     ApexFighterPlugin.setState(State.WALKING);
