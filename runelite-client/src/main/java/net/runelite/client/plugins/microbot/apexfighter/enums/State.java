@@ -5,6 +5,7 @@ public enum State {
     WALKING,
     BANKING,
     COMBAT,
+    HOPPING_WORLDS,
     DEATH,
     MISC,
     UNKNOWN

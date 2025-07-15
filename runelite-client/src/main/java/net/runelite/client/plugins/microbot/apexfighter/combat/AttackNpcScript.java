@@ -24,6 +24,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager;
 
 public class AttackNpcScript extends Script {
     private long lastHopTime = 0;
@@ -40,6 +41,11 @@ public class AttackNpcScript extends Script {
 
     @SneakyThrows
     public void run(ApexFighterConfig config) {
+        // Prevent attacking if plugin is hopping worlds
+        if (ApexFighterPlugin.getState() == State.HOPPING_WORLDS) {
+            Microbot.status = "Hopping worlds, not attacking new monsters.";
+            return;
+        }
         try {
             Rs2NpcManager.loadJson();
         } catch (Exception e) {
@@ -49,8 +55,8 @@ public class AttackNpcScript extends Script {
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
                 // Prevent attacking if a world hop is in progress
-                if (Microbot.isHopping()) {
-                    Microbot.status = "World hopping in progress";
+                if (ApexFighterPlugin.getState() == State.HOPPING_WORLDS) {
+                    Microbot.status = "Hopping worlds, not attacking new monsters.";
                     return;
                 }
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
@@ -58,48 +64,23 @@ public class AttackNpcScript extends Script {
 
                 boolean inTargetArea = config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius();
 
-                if (inTargetArea) {
-                    // World hopping logic based on player count in area
-                    if (config.maxPlayersBeforeHop() > 0 && attackableArea != null) {
-                        long playersInArea = net.runelite.client.plugins.microbot.util.player.Rs2Player.getPlayers(
-                            p -> attackableArea.contains(p.getWorldLocation())
-                        ).count();
-                        if (playersInArea >= config.maxPlayersBeforeHop()) {
-                            long now = System.currentTimeMillis();
-                            if (now - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
-                                Microbot.log("Hopping worlds: too many players in area (" + playersInArea + " >= " + config.maxPlayersBeforeHop() + ")");
-                                // Filter for safe, accessible worlds
-                                net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
-                                if (worldResult != null) {
-                                    List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds();
-                                    boolean isMember = Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
-                                    List<net.runelite.http.api.worlds.World> safeWorlds = worlds.stream()
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.PVP))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.DEADMAN))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.HIGH_RISK))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SKILL_TOTAL))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.TOURNAMENT))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SEASONAL))
-                                        .filter(w -> isMember == w.getTypes().contains(net.runelite.http.api.worlds.WorldType.MEMBERS))
-                                        .filter(w -> w.getId() != Microbot.getClient().getWorld())
-                                        .collect(java.util.stream.Collectors.toList());
-                                    if (!safeWorlds.isEmpty()) {
-                                        net.runelite.http.api.worlds.World nextWorld = safeWorlds.get(new java.util.Random().nextInt(safeWorlds.size()));
-                                        Microbot.hopToWorld(nextWorld.getId());
-                                        lastHopTime = now;
-                                        return;
-                                    } else {
-                                        Microbot.log("No valid worlds found to hop to.");
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // World hop logic moved to WorldHopManager
+                if (inTargetArea && attackableArea != null) {
+                    long playersInArea = net.runelite.client.plugins.microbot.util.player.Rs2Player.getPlayers(
+                        p -> attackableArea.contains(p.getWorldLocation())
+                    ).count();
+                    int maxPlayers = config.maxPlayersBeforeHop();
+                    int maxSecondsWithoutMonsters = config.maxSecondsWithoutMonstersBeforeHop();
+                    int secondsWithoutMonsters = (int)((System.currentTimeMillis() - lastMonsterFoundTime) / 1000);
+                    WorldHopManager.handleWorldHopIfNeeded(maxPlayers, maxSecondsWithoutMonsters, secondsWithoutMonsters, (int)playersInArea);
                 } else {
                     // Reset timers if not in area
                     lastMonsterFoundTime = System.currentTimeMillis();
                     lastHopTime = System.currentTimeMillis();
                 }
+
+                // Process world hop state
+                WorldHopManager.processWorldHop();
                 if(config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) < config.attackRadius() &&
                         !config.centerLocation().equals(new WorldPoint(0, 0, 0)) &&  ApexFighterPlugin.getState() != State.BANKING) {
                     if(ShortestPathPlugin.getPathfinder() != null)
