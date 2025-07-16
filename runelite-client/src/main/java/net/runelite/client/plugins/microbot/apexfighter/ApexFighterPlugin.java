@@ -6,22 +6,27 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
 import net.runelite.api.World;
-import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.events.ItemDespawned;
-import net.runelite.api.Item;
-import net.runelite.api.Hitsplat;
+import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import javax.inject.Inject;
+import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.api.NPC;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.NpcSpawned;
+import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.MenuOpened;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.ItemDespawned;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.widgets.Widget;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.MenuAction;
 import net.runelite.api.KeyCode;
-import net.runelite.api.events.ItemContainerChanged;
-import net.runelite.api.events.MenuEntryAdded;
-import net.runelite.api.events.MenuOpened;
-import net.runelite.api.events.ChatMessage;
-import net.runelite.api.events.GameTick;
-import net.runelite.api.events.NpcDespawned;
-import net.runelite.api.events.HitsplatApplied;
-import net.runelite.api.widgets.Widget;
 import net.runelite.api.worldmap.WorldMap;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -40,6 +45,11 @@ import net.runelite.client.plugins.microbot.apexfighter.combat.PotionManagerScri
 import net.runelite.client.plugins.microbot.apexfighter.combat.PrayerScript;
 import net.runelite.client.plugins.microbot.apexfighter.combat.SafeSpot;
 import net.runelite.client.plugins.microbot.apexfighter.combat.UseSpecialAttackScript;
+
+// ...existing code...
+
+// Ensure the class is closed properly
+// ...existing code...
 import net.runelite.client.plugins.microbot.apexfighter.enums.PrayerStyle;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
 import net.runelite.client.plugins.microbot.apexfighter.LootEntry;
@@ -47,22 +57,19 @@ import net.runelite.client.plugins.microbot.apexfighter.loot.LootScript;
 import net.runelite.client.plugins.microbot.apexfighter.safety.SafetyScript;
 import net.runelite.client.plugins.microbot.apexfighter.skill.AttackStyleScript;
 import net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager;
-import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.grounditems.GroundItem;
 import net.runelite.client.ui.JagexColors;
-import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ColorUtil;
 import net.runelite.client.util.Text;
-import javax.inject.Inject;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
-import java.util.List;
+import net.runelite.api.Hitsplat;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -194,7 +201,6 @@ public class ApexFighterPlugin extends Plugin {
     }
     private final CannonScript cannonScript = new CannonScript();
     private final AttackNpcScript attackNpc = new AttackNpcScript();
-    // WorldHopManager is imported and its static methods can be called directly.
     private final FoodScript foodScript = new FoodScript();
     private final LootScript lootScript = new LootScript();
     private final SafeSpot safeSpotScript = new SafeSpot();
@@ -557,7 +563,7 @@ public class ApexFighterPlugin extends Plugin {
     @Subscribe
     public void onHitsplatApplied(HitsplatApplied event){
         if (event.getActor() != Microbot.getClient().getLocalPlayer()) return;
-        final Hitsplat hitsplat = event.getHitsplat();
+        final net.runelite.api.Hitsplat hitsplat = event.getHitsplat();
         if ((hitsplat.isMine()) && event.getActor().getInteracting() instanceof NPC && config.togglePrayer() && (config.prayerStyle() == PrayerStyle.LAZY_FLICK) || (config.prayerStyle() == PrayerStyle.PERFECT_LAZY_FLICK)) {
             flickerScript.resetLastAttack(true);
             Rs2Prayer.disableAllPrayers();
