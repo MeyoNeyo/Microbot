@@ -41,11 +41,6 @@ public class AttackNpcScript extends Script {
 
     @SneakyThrows
     public void run(ApexFighterConfig config) {
-        // Prevent attacking if plugin is hopping worlds
-        if (ApexFighterPlugin.getState() == State.HOPPING_WORLDS) {
-            Microbot.status = "Hopping worlds, not attacking new monsters.";
-            return;
-        }
         try {
             Rs2NpcManager.loadJson();
         } catch (Exception e) {
@@ -54,11 +49,8 @@ public class AttackNpcScript extends Script {
 
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
-                // Prevent attacking if a world hop is in progress
-                if (ApexFighterPlugin.getState() == State.HOPPING_WORLDS) {
-                    Microbot.status = "Hopping worlds, not attacking new monsters.";
-                    return;
-                }
+                // Let Microbot.pauseAllScripts handle pausing during world hops
+                // Don't check plugin state here as it can get stuck
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
                     return;
 
@@ -72,14 +64,28 @@ public class AttackNpcScript extends Script {
                     int maxPlayers = config.maxPlayersBeforeHop();
                     int maxSecondsWithoutMonsters = config.maxSecondsWithoutMonstersBeforeHop();
                     int secondsWithoutMonsters = (int)((System.currentTimeMillis() - lastMonsterFoundTime) / 1000);
+                    
+                    // Log current conditions for debugging
+                    if (maxPlayers > 0 || maxSecondsWithoutMonsters > 0) {
+                        // Only log every 5 seconds to avoid spam
+                        if (System.currentTimeMillis() % 5000 < 600) {
+                            Microbot.log("[ApexFighter] Area Status - Players: " + playersInArea + "/" + maxPlayers + 
+                                       ", No monsters for: " + secondsWithoutMonsters + "/" + maxSecondsWithoutMonsters + " seconds");
+                        }
+                    }
+                    
                     // World hop logic with pause/resume
                     if ((maxPlayers > 0 && playersInArea > maxPlayers) ||
                         (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters > maxSecondsWithoutMonsters)) {
                         // Only hop if not already paused
                         if (!Microbot.pauseAllScripts.get()) {
-                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.safeHopWorlds(
-                                playersInArea > maxPlayers ? "Too many players in area" : "No monsters found for too long"
-                            );
+                            String hopReason = playersInArea > maxPlayers ? 
+                                "TOO MANY PLAYERS: Found " + playersInArea + " players in area (max allowed: " + maxPlayers + ")" : 
+                                "NO MONSTERS: No monsters found for " + secondsWithoutMonsters + " seconds (max allowed: " + maxSecondsWithoutMonsters + ")";
+                            Microbot.log("[ApexFighter] ⚠️ WORLD HOP TRIGGERED - " + hopReason);
+                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.safeHopWorlds(hopReason);
+                        } else {
+                            Microbot.log("[ApexFighter] World hop conditions met but scripts already paused - waiting for current hop to complete");
                         }
                         return;
                     }

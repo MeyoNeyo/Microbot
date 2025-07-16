@@ -545,9 +545,11 @@ public class ApexFighterPlugin extends Plugin {
             }
 
             if (config.maxPlayersBeforeHop() > 0 && getPlayerCountInArea() >= config.maxPlayersBeforeHop()) {
+                Microbot.log("[ApexFighter] WORLD HOP STATE SET - Player limit exceeded: " + getPlayerCountInArea() + "/" + config.maxPlayersBeforeHop());
                 setState(State.HOPPING_WORLDS);
             }
             if (config.maxSecondsWithoutMonstersBeforeHop() > 0 && secondsWithoutMonsters >= config.maxSecondsWithoutMonstersBeforeHop()) {
+                Microbot.log("[ApexFighter] WORLD HOP STATE SET - Monster timeout: " + secondsWithoutMonsters + "/" + config.maxSecondsWithoutMonstersBeforeHop() + " seconds");
                 setState(State.HOPPING_WORLDS);
                 secondsWithoutMonsters = 0;
             }
