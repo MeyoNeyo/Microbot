@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.api.NPC;
+import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.NpcSpawned;
 import net.runelite.api.events.NpcDespawned;
@@ -122,7 +123,9 @@ public class ApexFighterPlugin extends Plugin {
     // Helper to count players in the area
     private int getPlayerCountInArea() {
         WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
+        Player localPlayer = Microbot.getClient().getLocalPlayer();
         return (int) Microbot.getClient().getTopLevelWorldView().players().stream()
+            .filter(p -> p != localPlayer)  // Exclude the local player
             .filter(p -> p.getWorldLocation().distanceTo(center) <= config.attackRadius())
             .count();
     }
