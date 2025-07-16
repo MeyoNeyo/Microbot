@@ -56,9 +56,9 @@ enum ItemToKeep {
 @Slf4j
 public class BankerScript extends Script {
     ApexFighterConfig config;
-
-
     boolean initialized = false;
+    private int bankingRetryCount = 0;
+    private static final int MAX_BANKING_RETRIES = 5;
 
     public boolean run(ApexFighterConfig config) {
         this.config = config;
@@ -66,8 +66,25 @@ public class BankerScript extends Script {
             try {
                 if (!Microbot.isLoggedIn()) return;
                 if (config.bank() && needsBanking()) {
+                    log.info("[run] Banking needed, attempting to bank (retry count: {})", bankingRetryCount);
+                    
+                    // Reset retry count if we've been away from banking for a while
+                    if (ApexFighterPlugin.getState() != State.BANKING) {
+                        bankingRetryCount = 0;
+                    }
+                    
+                    // Check if we've exceeded max retries
+                    if (bankingRetryCount >= MAX_BANKING_RETRIES) {
+                        log.error("[run] Max banking retries ({}) exceeded, resetting retry count and continuing", MAX_BANKING_RETRIES);
+                        bankingRetryCount = 0;
+                        ApexFighterPlugin.setState(State.IDLE);
+                        return; // Skip banking this cycle
+                    }
+                    
                     // Removed eatFoodForSpace logic; FoodScript handles eating
                     if (handleBanking()) {
+                        log.info("[run] Banking successful, returning to combat area");
+                        bankingRetryCount = 0; // Reset on success
                         // After banking, walk to center if not already there
                         if (config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius()) {
                             ApexFighterPlugin.setState(State.WALKING);
@@ -75,6 +92,10 @@ public class BankerScript extends Script {
                         } else {
                             ApexFighterPlugin.setState(State.IDLE);
                         }
+                    } else {
+                        bankingRetryCount++;
+                        log.warn("[run] Banking failed, will retry next cycle (attempt {}/{})", bankingRetryCount, MAX_BANKING_RETRIES);
+                        // State is already reset to IDLE in handleBanking if it failed
                     }
                 } else if (!needsBanking() && config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius() && !Objects.equals(config.centerLocation(), new WorldPoint(0, 0, 0))) {
                     ApexFighterPlugin.setState(State.WALKING);
@@ -242,12 +263,23 @@ public class BankerScript extends Script {
     public boolean handleBanking() {
         ApexFighterPlugin.setState(State.BANKING);
         Rs2Prayer.disableAllPrayers();
+        
+        log.info("[handleBanking] Starting banking process");
+        
+        // Try to walk to bank and open it
         if (Rs2Bank.walkToBankAndUseBank()) {
+            log.info("[handleBanking] Successfully reached bank, performing transactions");
             depositAllExcept(config);
             withdrawUpkeepItems(config);
             Rs2Bank.closeBank();
+            log.info("[handleBanking] Banking completed successfully");
+            return !needsBanking();
+        } else {
+            log.warn("[handleBanking] Failed to reach bank or open bank interface");
+            // Reset state if banking failed
+            ApexFighterPlugin.setState(State.IDLE);
+            return false;
         }
-        return !needsBanking();
     }
 
 

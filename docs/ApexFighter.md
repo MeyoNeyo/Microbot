@@ -12,18 +12,10 @@
 
 - **Configurable Auto-Eat Percentage:**
   - Add a setting in the plugin menu to let the user specify at what health percentage the player should eat food (e.g., 40%, 60%, etc.).
-  - or add like scurrus plugin 2 boxes for min and max health percentage to eat food.
+  - or add like scurrus plugin 2 boxes for min and max health percentage to eat food. or just 1 box for min health percentage. but this needs to be analyzed to see what is the best practice.
   - Implement logic so the script automatically eats food when the player's health drops below this percentage.
   - The setting should be an integer input box in the menu for easy adjustment.
   - Not yet implemented as of July 2025.
-
-- **Show Plugin Runtime & Reset on Shutdown:**
-  - Display the elapsed time since the plugin started (e.g., 01:23:45) in the overlay or status panel.
-  - Reset the timer if the plugin is turned off or shut down, so each session shows its own runtime.
-  - Not yet implemented as of July 2025.
-
-- **Show Plugin Runtime:**
-  - Display how long the plugin has been running (e.g., 01:23:45) in the overlay or status panel.
 
 - **(Future) Grand Exchange Refill:**
   - If food, ammo, runes, or equipment are depleted (including after death), automatically buy required items from the Grand Exchange and restock the bank.
@@ -39,6 +31,14 @@
 
 - **Bury Bones Only Option:**
   - The script now only buries bones found on the ground, without picking them up first. The logic for picking up bones has been removed. (Implemented July 2025)
+
+  - **Show Plugin Runtime & Reset on Shutdown:**
+  - Display the elapsed time since the plugin started (e.g., 01:23:45) in the overlay or status panel.
+  - Reset the timer if the plugin is turned off or shut down, so each session shows its own runtime.
+  - Not yet implemented as of July 2025.
+
+- **Show Plugin Runtime:**
+  - Display how long the plugin has been running (e.g., 01:23:45) in the overlay or status panel.
 
 # ApexFighter Plugin
 
