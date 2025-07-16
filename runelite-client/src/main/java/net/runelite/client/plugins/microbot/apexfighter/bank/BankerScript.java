@@ -68,6 +68,25 @@ public class BankerScript extends Script {
                 if (config.bank() && needsBanking()) {
                     log.info("[run] Banking needed, attempting to bank (retry count: {})", bankingRetryCount);
                     
+                    // PRIORITY: If world hop is in progress and banking is urgent, interrupt it
+                    if (Microbot.pauseAllScripts.get()) {
+                        // Check if we have food (most critical)
+                        boolean hasFoodDepleted = false;
+                        for (ItemToKeep item : ItemToKeep.values()) {
+                            if (item.name().equals("FOOD") && item.isEnabled(config)) {
+                                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+                                if (count == 0) {
+                                    hasFoodDepleted = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (hasFoodDepleted) {
+                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.interruptWorldHopForBanking("No food remaining - banking is critical!");
+                        }
+                    }
+                    
                     // Reset retry count if we've been away from banking for a while
                     if (ApexFighterPlugin.getState() != State.BANKING) {
                         bankingRetryCount = 0;
@@ -88,7 +107,22 @@ public class BankerScript extends Script {
                         // After banking, walk to center if not already there
                         if (config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius()) {
                             ApexFighterPlugin.setState(State.WALKING);
-                            Rs2Walker.walkTo(config.centerLocation());
+                            // Temporarily disable teleports to prevent getting stuck on teleport dialogues
+                            boolean originalDisableTeleports = Rs2Walker.disableTeleports;
+                            try {
+                                // Disable teleports only if user has configured to ignore them for banking
+                                if (config.ignoreTeleport()) {
+                                    Rs2Walker.disableTeleports = true;
+                                    log.info("[run] Disabled teleports for walking back to combat area");
+                                }
+                                Rs2Walker.walkTo(config.centerLocation());
+                            } finally {
+                                // Always restore the original teleport setting
+                                Rs2Walker.disableTeleports = originalDisableTeleports;
+                                if (originalDisableTeleports != Rs2Walker.disableTeleports) {
+                                    log.info("[run] Restored teleport setting to: {}", originalDisableTeleports);
+                                }
+                            }
                         } else {
                             ApexFighterPlugin.setState(State.IDLE);
                         }
@@ -99,8 +133,20 @@ public class BankerScript extends Script {
                     }
                 } else if (!needsBanking() && config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius() && !Objects.equals(config.centerLocation(), new WorldPoint(0, 0, 0))) {
                     ApexFighterPlugin.setState(State.WALKING);
-                    if (Rs2Walker.walkTo(config.centerLocation())) {
-                        ApexFighterPlugin.setState(State.IDLE);
+                    // Temporarily disable teleports to prevent getting stuck on teleport dialogues
+                    boolean originalDisableTeleports = Rs2Walker.disableTeleports;
+                    try {
+                        // Disable teleports only if user has configured to ignore them for banking
+                        if (config.ignoreTeleport()) {
+                            Rs2Walker.disableTeleports = true;
+                            log.info("[run] Disabled teleports for walking to combat area");
+                        }
+                        if (Rs2Walker.walkTo(config.centerLocation())) {
+                            ApexFighterPlugin.setState(State.IDLE);
+                        }
+                    } finally {
+                        // Always restore the original teleport setting
+                        Rs2Walker.disableTeleports = originalDisableTeleports;
                     }
                 }
             } catch (Exception ex) {
@@ -158,6 +204,54 @@ public class BankerScript extends Script {
             }
         }
         return ((defaultDepleted || customDepleted) && config.bank()) || (slotDepleted && config.bank());
+    }
+
+    /**
+     * Static method to check if banking is needed without requiring a BankerScript instance.
+     * This should be used by other scripts to check banking priority.
+     */
+    public static boolean isBankingNeeded(ApexFighterConfig config) {
+        if (!config.bank()) return false;
+        
+        // 1. Food priority check
+        for (ItemToKeep item : ItemToKeep.values()) {
+            if (item.name().equals("FOOD") && item.isEnabled(config)) {
+                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+                if (count == 0) {
+                    return true; // Food depleted - banking needed immediately
+                }
+            }
+        }
+
+        // 2. Check other critical items
+        boolean defaultDepleted = isUpkeepItemDepletedStatic(config);
+        boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
+        
+        if (defaultDepleted || slotDepleted) {
+            return true;
+        }
+        
+        // 3. Check custom banking items
+        Map<String, Integer> keepItems = BankerScript.parseBankingInventoryKeep(config.bankingInventoryKeep());
+        for (Map.Entry<String, Integer> entry : keepItems.entrySet()) {
+            String itemName = entry.getKey();
+            Integer requiredAmount = entry.getValue();
+            int currentAmount = Rs2Inventory.all().stream()
+                .filter(i -> i.getName().equalsIgnoreCase(itemName))
+                .mapToInt(Rs2ItemModel::getQuantity)
+                .sum();
+            if (requiredAmount != null) {
+                if (currentAmount < requiredAmount) {
+                    return true;
+                }
+            } else {
+                if (currentAmount < 1) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 
     public boolean withdrawUpkeepItems(ApexFighterConfig config) {
@@ -251,6 +345,15 @@ public class BankerScript extends Script {
     }
 
     public boolean isUpkeepItemDepleted(ApexFighterConfig config) {
+        return Arrays.stream(ItemToKeep.values())
+                .filter(item -> item != ItemToKeep.TELEPORT && item.isEnabled(config))
+                .anyMatch(item -> item.getIds().stream().mapToInt(Rs2Inventory::count).sum() == 0);
+    }
+
+    /**
+     * Static version of isUpkeepItemDepleted for use in static contexts
+     */
+    public static boolean isUpkeepItemDepletedStatic(ApexFighterConfig config) {
         return Arrays.stream(ItemToKeep.values())
                 .filter(item -> item != ItemToKeep.TELEPORT && item.isEnabled(config))
                 .anyMatch(item -> item.getIds().stream().mapToInt(Rs2Inventory::count).sum() == 0);

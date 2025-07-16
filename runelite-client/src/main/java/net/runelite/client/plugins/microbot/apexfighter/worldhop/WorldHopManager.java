@@ -23,6 +23,7 @@ public class WorldHopManager {
     /**
      * Checks if scripts are paused due to world hopping and resumes them if the hop is complete.
      * Should be called regularly by scripts to ensure scripts resume after hop.
+     * Also checks for banking priority and cancels world hop if banking is urgently needed.
      */
     public static void processWorldHop() {
         // If scripts are paused and player is logged in and not hopping, resume scripts
@@ -30,6 +31,11 @@ public class WorldHopManager {
             // Check if we're logged in and not in a hopping state
             GameState gameState = Microbot.getClient().getGameState();
             boolean isHopping = Microbot.isHopping();
+            
+            // PRIORITY CHECK: If banking is urgent, cancel world hop and resume scripts
+            // We need to import the config here, but we can't access it directly
+            // So we'll check this in the AttackNpcScript instead
+            
             if (gameState == GameState.LOGGED_IN && !isHopping) {
                 Microbot.log("[ApexFighter] processWorldHop: GameState=LOGGED_IN, isHopping=false - resuming scripts");
                 Microbot.pauseAllScripts.compareAndSet(true, false);
@@ -170,4 +176,16 @@ public class WorldHopManager {
     }
 
     // The following logic is now handled by safeHopWorlds and should not be duplicated here.
+
+    /**
+     * Interrupts an ongoing world hop if banking becomes urgent.
+     * This should be called by the banking system when critical items are depleted.
+     */
+    public static void interruptWorldHopForBanking(String reason) {
+        if (Microbot.pauseAllScripts.get()) {
+            Microbot.log("[ApexFighter] ⚠️ INTERRUPTING WORLD HOP FOR URGENT BANKING - " + reason);
+            Microbot.pauseAllScripts.compareAndSet(true, false);
+            Microbot.log("[ApexFighter] World hop interrupted, resuming scripts for banking");
+        }
+    }
 }

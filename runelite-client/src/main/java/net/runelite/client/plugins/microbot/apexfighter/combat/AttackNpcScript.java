@@ -126,7 +126,19 @@ public class AttackNpcScript extends Script {
                         }
                     }
                     
-                    // World hop logic with pause/resume
+                    // PRIORITY CHECK: Banking has priority over world hopping
+                    if (net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config)) {
+                        if (maxPlayers > 0 && playersInArea >= maxPlayers) {
+                            Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to too many players. Banking takes priority!");
+                        }
+                        if (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters) {
+                            Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to no monsters. Banking takes priority!");
+                        }
+                        // Don't hop worlds, let banking system handle this
+                        return;
+                    }
+                    
+                    // World hop logic with pause/resume (only if banking is NOT needed)
                     if ((maxPlayers > 0 && playersInArea >= maxPlayers) ||
                         (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters)) {
                         // Only hop if not already paused
