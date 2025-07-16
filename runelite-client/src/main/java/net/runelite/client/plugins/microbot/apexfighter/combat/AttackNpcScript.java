@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 import net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager;
 
 public class AttackNpcScript extends Script {
-    private long lastHopTime = 0;
     private long lastMonsterFoundTime = System.currentTimeMillis();
 
     public static Actor currentNpc = null;
@@ -54,48 +53,7 @@ public class AttackNpcScript extends Script {
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
                     return;
 
-                boolean inTargetArea = config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius();
-
-                // World hop logic moved to WorldHopManager
-                if (inTargetArea && attackableArea != null) {
-                    long playersInArea = net.runelite.client.plugins.microbot.util.player.Rs2Player.getPlayers(
-                        p -> attackableArea.contains(p.getWorldLocation())
-                    ).count();
-                    int maxPlayers = config.maxPlayersBeforeHop();
-                    int maxSecondsWithoutMonsters = config.maxSecondsWithoutMonstersBeforeHop();
-                    int secondsWithoutMonsters = (int)((System.currentTimeMillis() - lastMonsterFoundTime) / 1000);
-                    
-                    // Log current conditions for debugging
-                    if (maxPlayers > 0 || maxSecondsWithoutMonsters > 0) {
-                        // Only log every 5 seconds to avoid spam
-                        if (System.currentTimeMillis() % 5000 < 600) {
-                            Microbot.log("[ApexFighter] Area Status - Players: " + playersInArea + "/" + maxPlayers + 
-                                       ", No monsters for: " + secondsWithoutMonsters + "/" + maxSecondsWithoutMonsters + " seconds");
-                        }
-                    }
-                    
-                    // World hop logic with pause/resume
-                    if ((maxPlayers > 0 && playersInArea > maxPlayers) ||
-                        (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters > maxSecondsWithoutMonsters)) {
-                        // Only hop if not already paused
-                        if (!Microbot.pauseAllScripts.get()) {
-                            String hopReason = playersInArea > maxPlayers ? 
-                                "TOO MANY PLAYERS: Found " + playersInArea + " players in area (max allowed: " + maxPlayers + ")" : 
-                                "NO MONSTERS: No monsters found for " + secondsWithoutMonsters + " seconds (max allowed: " + maxSecondsWithoutMonsters + ")";
-                            Microbot.log("[ApexFighter] ⚠️ WORLD HOP TRIGGERED - " + hopReason);
-                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.safeHopWorlds(hopReason);
-                        } else {
-                            Microbot.log("[ApexFighter] World hop conditions met but scripts already paused - waiting for current hop to complete");
-                        }
-                        return;
-                    }
-                } else {
-                    // Reset timers if not in area
-                    lastMonsterFoundTime = System.currentTimeMillis();
-                    lastHopTime = System.currentTimeMillis();
-                }
-
-                // Process world hop state
+                // Process world hop state first
                 WorldHopManager.processWorldHop();
                 if(config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) < config.attackRadius() &&
                         !config.centerLocation().equals(new WorldPoint(0, 0, 0)) &&  ApexFighterPlugin.getState() != State.BANKING) {
@@ -136,43 +94,53 @@ public class AttackNpcScript extends Script {
 
                 filteredAttackableNpcs.set(attackableNpcs);
 
-                // Monster timeout world hop logic
-                if (config.maxSecondsWithoutMonstersBeforeHop() > 0) {
-                    if (attackableNpcs.isEmpty()) {
-                        long now = System.currentTimeMillis();
-                        Microbot.log("No monsters found. Waiting to hop (" + ((now - lastMonsterFoundTime)/1000) + "/" + config.maxSecondsWithoutMonstersBeforeHop() + " seconds)");
-                        if (now - lastMonsterFoundTime > config.maxSecondsWithoutMonstersBeforeHop() * 1000L) {
-                            long hopNow = System.currentTimeMillis();
-                            if (hopNow - lastHopTime > 10000) { // 10s cooldown to avoid rapid hops
-                                Microbot.log("Hopping worlds: no monsters found for " + config.maxSecondsWithoutMonstersBeforeHop() + " seconds.");
-                                net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
-                                if (worldResult != null) {
-                                    List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds();
-                                    boolean isMember = Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
-                                    List<net.runelite.http.api.worlds.World> safeWorlds = worlds.stream()
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.PVP))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.DEADMAN))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.HIGH_RISK))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SKILL_TOTAL))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.TOURNAMENT))
-                                        .filter(w -> !w.getTypes().contains(net.runelite.http.api.worlds.WorldType.SEASONAL))
-                                        .filter(w -> isMember == w.getTypes().contains(net.runelite.http.api.worlds.WorldType.MEMBERS))
-                                        .filter(w -> w.getId() != Microbot.getClient().getWorld())
-                                        .collect(java.util.stream.Collectors.toList());
-                                    if (!safeWorlds.isEmpty()) {
-                                        net.runelite.http.api.worlds.World nextWorld = safeWorlds.get(new java.util.Random().nextInt(safeWorlds.size()));
-                                        Microbot.hopToWorld(nextWorld.getId());
-                                        lastHopTime = hopNow;
-                                    } else {
-                                        Microbot.log("No valid worlds found to hop to.");
-                                    }
-                                }
-                            }
-                            lastMonsterFoundTime = now; // reset to avoid rapid hops
-                        }
-                    } else {
+                // World hop logic - check after monsters are filtered
+                boolean inTargetArea = config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius();
+                if (inTargetArea) {
+                    // Count players in area (excluding self)
+                    net.runelite.api.Player localPlayer = Microbot.getClient().getLocalPlayer();
+                    long playersInArea = Microbot.getClient().getTopLevelWorldView().players().stream()
+                        .filter(p -> p != localPlayer)  // Exclude the local player
+                        .filter(p -> p.getWorldLocation().distanceTo(config.centerLocation()) <= config.attackRadius())
+                        .count();
+                    
+                    int maxPlayers = config.maxPlayersBeforeHop();
+                    int maxSecondsWithoutMonsters = config.maxSecondsWithoutMonstersBeforeHop();
+                    
+                    // Update monster timer based on filtered monster list
+                    if (!attackableNpcs.isEmpty()) {
                         lastMonsterFoundTime = System.currentTimeMillis();
                     }
+                    
+                    int secondsWithoutMonsters = (int)((System.currentTimeMillis() - lastMonsterFoundTime) / 1000);
+                    
+                    // Log current conditions for debugging
+                    if (maxPlayers > 0 || maxSecondsWithoutMonsters > 0) {
+                        // Only log every 5 seconds to avoid spam
+                        if (System.currentTimeMillis() % 5000 < 600) {
+                            Microbot.log("[ApexFighter] Area Status - Players: " + playersInArea + "/" + maxPlayers + 
+                                       ", Monsters: " + attackableNpcs.size() + ", No monsters for: " + secondsWithoutMonsters + "/" + maxSecondsWithoutMonsters + " seconds");
+                        }
+                    }
+                    
+                    // World hop logic with pause/resume
+                    if ((maxPlayers > 0 && playersInArea >= maxPlayers) ||
+                        (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters)) {
+                        // Only hop if not already paused
+                        if (!Microbot.pauseAllScripts.get()) {
+                            String hopReason = playersInArea >= maxPlayers ? 
+                                "TOO MANY PLAYERS: Found " + playersInArea + " players in area (max allowed: " + maxPlayers + ")" : 
+                                "NO MONSTERS: No monsters found for " + secondsWithoutMonsters + " seconds (max allowed: " + maxSecondsWithoutMonsters + ")";
+                            Microbot.log("[ApexFighter] ⚠️ WORLD HOP TRIGGERED - " + hopReason);
+                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.safeHopWorlds(hopReason);
+                        } else {
+                            Microbot.log("[ApexFighter] World hop conditions met but scripts already paused - waiting for current hop to complete");
+                        }
+                        return;
+                    }
+                } else {
+                    // Reset timer if not in area
+                    lastMonsterFoundTime = System.currentTimeMillis();
                 }
 
                 if(config.state().equals(State.BANKING) || config.state().equals(State.WALKING))
