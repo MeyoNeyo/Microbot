@@ -8,7 +8,7 @@ import net.runelite.client.plugins.microbot.apexfighter.enums.PrayerStyle;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
 import net.runelite.client.plugins.microbot.inventorysetups.InventorySetup;
 import net.runelite.client.plugins.microbot.util.magic.Rs2CombatSpells;
-import net.runelite.client.plugins.microbot.util.slayer.enums.SlayerMaster;
+// import net.runelite.client.plugins.microbot.util.slayer.enums.SlayerMaster; // Disabled - Slayer features commented out
 
 @ConfigGroup(ApexFighterConfig.GROUP)
 @ConfigInformation("")
@@ -17,74 +17,82 @@ public interface ApexFighterConfig extends Config {
 
     String GROUP = "PlayerAssistant";
 
+    // === CORE SECTIONS ===
     @ConfigSection(
             name = "Combat",
-            description = "Combat",
+            description = "Combat settings and monster targeting",
             position = 10,
             closedByDefault = false
     )
     String combatSection = "Combat";
-    @ConfigSection(
-            name = "Slayer",
-            description = "Slayer",
-            position = 11,
-            closedByDefault = true
-    )
-    String slayerSection = "Slayer";
-    @ConfigSection(
-            name = "Banking",
-            description = "Banking settings",
-            position = 992,
-            closedByDefault = false
-    )
-    String banking = "Banking";
-    //Gear section
-    @ConfigSection(
-            name = "Gear",
-            description = "Gear",
-            position = 55,
-            closedByDefault = true
-    )
-    String gearSection = "Gear";
-    // Safety section
-    @ConfigSection(
-            name = "Safety",
-            description = "Safety",
-            position = 54,
-            closedByDefault = true
-    )
-    String safetySection = "Safety";
-
+    
     @ConfigSection(
             name = "Food & Potions",
-            description = "Food & Potions",
+            description = "Food consumption and potion management",
             position = 20,
             closedByDefault = false
     )
     String foodAndPotionsSection = "Food & Potions";
+    
     @ConfigSection(
             name = "Loot",
-            description = "Loot",
+            description = "Item looting and pickup settings",
             position = 30,
             closedByDefault = false
     )
     String lootSection = "Loot";
-    //Prayer section
+    
     @ConfigSection(
             name = "Prayer",
-            description = "Prayer",
+            description = "Prayer and quick prayer settings",
             position = 40,
             closedByDefault = false
     )
     String prayerSection = "Prayer";
-    //Skilling section
+    
+    // === ADVANCED SECTIONS ===
     @ConfigSection(
             name = "Skilling",
-            description = "Skilling",
+            description = "Combat skill training and balance",
             position = 50,
-            closedByDefault = false
+            closedByDefault = true
     )
     String skillingSection = "Combat Skilling";
+    
+    @ConfigSection(
+            name = "Gear",
+            description = "Equipment and inventory setup management",
+            position = 60,
+            closedByDefault = true
+    )
+    String gearSection = "Gear";
+    
+    @ConfigSection(
+            name = "Safety",
+            description = "Safety checks and emergency features",
+            position = 70,
+            closedByDefault = true
+    )
+    String safetySection = "Safety";
+    
+    @ConfigSection(
+            name = "Banking",
+            description = "Banking settings and inventory management",
+            position = 80,
+            closedByDefault = true
+    )
+    String banking = "Banking";
+    
+    // === DISABLED/HIDDEN SECTIONS ===
+    /*
+    @ConfigSection(
+            name = "Slayer",
+            description = "Slayer task management (Currently disabled)",
+            position = 999,
+            closedByDefault = true
+    )
+    String slayerSection = "Slayer";
+    */
 
     @ConfigItem(
             keyName = "Combat",
@@ -922,6 +930,8 @@ public interface ApexFighterConfig extends Config {
         return 25;
     }
 
+    // === SLAYER FEATURES (CURRENTLY DISABLED) ===
+    /*
     // Slayer mode
     @ConfigItem(
             keyName = "slayerMode",
@@ -947,7 +957,7 @@ public interface ApexFighterConfig extends Config {
     default SlayerMaster slayerMaster() {
         return SlayerMaster.VANNAKA;
     }
-
+    */
 
     //hidden config item for state
     @ConfigItem(
@@ -1004,11 +1014,12 @@ public interface ApexFighterConfig extends Config {
         return "";
     }
 
+    // World Hopping Settings (Combat Section)
     @ConfigItem(
         keyName = "maxPlayersBeforeHop",
         name = "Max Players Before Hop",
         description = "If the number of players in the fighting area is >= this value, hop worlds. 0 disables.",
-        position = 1001,
+        position = 15,
         section = combatSection
     )
     default int maxPlayersBeforeHop() { return 0; }
@@ -1017,7 +1028,7 @@ public interface ApexFighterConfig extends Config {
         keyName = "maxSecondsWithoutMonstersBeforeHop",
         name = "Max Seconds Without Monsters Before Hop",
         description = "If no monsters are found for this many seconds, hop worlds. 0 disables.",
-        position = 1002,
+        position = 16,
         section = combatSection
     )
     default int maxSecondsWithoutMonstersBeforeHop() { return 0; }
