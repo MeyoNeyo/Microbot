@@ -194,6 +194,7 @@ public class ApexFighterPlugin extends Plugin {
     }
     private final CannonScript cannonScript = new CannonScript();
     private final AttackNpcScript attackNpc = new AttackNpcScript();
+    // WorldHopManager is imported and its static methods can be called directly.
     private final FoodScript foodScript = new FoodScript();
     private final LootScript lootScript = new LootScript();
     private final SafeSpot safeSpotScript = new SafeSpot();
@@ -506,7 +507,7 @@ public class ApexFighterPlugin extends Plugin {
                 lastWorld = Microbot.getClient().getWorld();
                 hoppingStarted = true;
                 Microbot.log("[ApexFighter] Hopping worlds due to area conditions.");
-                WorldHopManager.hopWorlds();
+                WorldHopManager.safeHopWorlds(null);
                 return;
             }
             if (Microbot.getClient().getWorld() != lastWorld) {

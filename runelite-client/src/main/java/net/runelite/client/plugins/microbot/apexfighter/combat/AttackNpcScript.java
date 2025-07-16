@@ -72,7 +72,17 @@ public class AttackNpcScript extends Script {
                     int maxPlayers = config.maxPlayersBeforeHop();
                     int maxSecondsWithoutMonsters = config.maxSecondsWithoutMonstersBeforeHop();
                     int secondsWithoutMonsters = (int)((System.currentTimeMillis() - lastMonsterFoundTime) / 1000);
-                    WorldHopManager.handleWorldHopIfNeeded(maxPlayers, maxSecondsWithoutMonsters, secondsWithoutMonsters, (int)playersInArea);
+                    // World hop logic with pause/resume
+                    if ((maxPlayers > 0 && playersInArea > maxPlayers) ||
+                        (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters > maxSecondsWithoutMonsters)) {
+                        // Only hop if not already paused
+                        if (!Microbot.pauseAllScripts.get()) {
+                            net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager.safeHopWorlds(
+                                playersInArea > maxPlayers ? "Too many players in area" : "No monsters found for too long"
+                            );
+                        }
+                        return;
+                    }
                 } else {
                     // Reset timers if not in area
                     lastMonsterFoundTime = System.currentTimeMillis();
