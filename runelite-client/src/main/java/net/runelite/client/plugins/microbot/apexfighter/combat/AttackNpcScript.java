@@ -2,7 +2,9 @@ package net.runelite.client.plugins.microbot.apexfighter.combat;
 
 import lombok.SneakyThrows;
 import net.runelite.api.Actor;
+import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.apexfighter.ApexFighterConfig;
@@ -19,12 +21,12 @@ import net.runelite.client.plugins.microbot.util.npc.Rs2NpcManager;
 import net.runelite.client.plugins.microbot.util.npc.Rs2NpcModel;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import net.runelite.client.plugins.microbot.apexfighter.worldhop.WorldHopManager;
 
 public class AttackNpcScript extends Script {
     private long lastMonsterFoundTime = System.currentTimeMillis();
@@ -97,11 +99,12 @@ public class AttackNpcScript extends Script {
                 // World hop logic - check after monsters are filtered
                 boolean inTargetArea = config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius();
                 if (inTargetArea) {
-                    // Count players in area (excluding self)
-                    net.runelite.api.Player localPlayer = Microbot.getClient().getLocalPlayer();
+                    // Count players in area (excluding self) - use same center logic as getPlayerCountInArea
+                    WorldPoint center = config.toggleCenterTile() ? config.centerLocation() : Rs2Player.getWorldLocation();
+                    Player localPlayer = Microbot.getClient().getLocalPlayer();
                     long playersInArea = Microbot.getClient().getTopLevelWorldView().players().stream()
                         .filter(p -> p != localPlayer)  // Exclude the local player
-                        .filter(p -> p.getWorldLocation().distanceTo(config.centerLocation()) <= config.attackRadius())
+                        .filter(p -> p.getWorldLocation().distanceTo(center) <= config.attackRadius())
                         .count();
                     
                     int maxPlayers = config.maxPlayersBeforeHop();
@@ -217,13 +220,13 @@ public class AttackNpcScript extends Script {
         List<String> lizardVariants = new ArrayList<>(Arrays.asList("Lizard", "Desert Lizard", "Small Lizard"));
         if (npc == null) return;
         if (lizardVariants.contains(npc.getName()) && npc.getHealthRatio() < 5) {
-            Rs2Inventory.useItemOnNpc(net.runelite.api.ItemID.ICE_COOLER, npc);
+            Rs2Inventory.useItemOnNpc(ItemID.SLAYER_ICY_WATER, npc);
             Rs2Player.waitForAnimation();
         } else if (npc.getName().equalsIgnoreCase("rockslug") && npc.getHealthRatio() < 5) {
-            Rs2Inventory.useItemOnNpc(net.runelite.api.ItemID.BAG_OF_SALT, npc);
+            Rs2Inventory.useItemOnNpc(ItemID.SLAYER_BAG_OF_SALT, npc);
             Rs2Player.waitForAnimation();
         } else if (npc.getName().equalsIgnoreCase("gargoyle") && npc.getHealthRatio() < 3) {
-            Rs2Inventory.useItemOnNpc(net.runelite.api.ItemID.ROCK_HAMMER, npc);
+            Rs2Inventory.useItemOnNpc(ItemID.SLAYER_ROCK_HAMMER, npc);
             Rs2Player.waitForAnimation();
         }
     }

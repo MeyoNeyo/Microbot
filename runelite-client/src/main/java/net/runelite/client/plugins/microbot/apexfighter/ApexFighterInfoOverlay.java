@@ -1,6 +1,5 @@
 package net.runelite.client.plugins.microbot.apexfighter;
 
-
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -9,7 +8,6 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 
 import javax.inject.Inject;
 import java.awt.*;
-
 
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -38,7 +36,8 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .build());
 
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Play Style: " + config.playStyle() + "(" + config.playStyle().getPrimaryTickInterval() + "," + config.playStyle().getSecondaryTickInterval() + ")")
+                    .left("Play Style: " + config.playStyle() + "(" + config.playStyle().getPrimaryTickInterval() + ","
+                            + config.playStyle().getSecondaryTickInterval() + ")")
                     .right("Attack cooldown: " + ApexFighterPlugin.getCooldown())
                     .build());
 
@@ -57,15 +56,15 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
             if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
                 long totalValue = ApexFighterPlugin.getTotalLootValue();
                 panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Total Loot Value:")
-                    .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
-                    .build());
+                        .left("Total Loot Value:")
+                        .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
+                        .build());
                 panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());
                 for (LootEntry entry : ApexFighterPlugin.sessionLoot.values()) {
                     panelComponent.getChildren().add(LineComponent.builder()
-                        .left(entry.getName())
-                        .right("x" + entry.getQuantity())
-                        .build());
+                            .left(entry.getName())
+                            .right("x" + entry.getQuantity())
+                            .build());
                 }
             }
         } catch (Exception ex) {

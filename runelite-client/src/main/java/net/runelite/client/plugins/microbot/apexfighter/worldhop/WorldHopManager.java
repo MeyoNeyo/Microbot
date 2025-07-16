@@ -1,6 +1,14 @@
 package net.runelite.client.plugins.microbot.apexfighter.worldhop;
 
+import net.runelite.api.GameState;
+import net.runelite.api.WorldType;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.http.api.worlds.World;
+import net.runelite.http.api.worlds.WorldResult;
+
+import java.util.List;
+import java.util.Random;
+import java.util.stream.Collectors;
 
 public class WorldHopManager {
 
@@ -20,9 +28,9 @@ public class WorldHopManager {
         // If scripts are paused and player is logged in and not hopping, resume scripts
         if (Microbot.pauseAllScripts.get()) {
             // Check if we're logged in and not in a hopping state
-            net.runelite.api.GameState gameState = Microbot.getClient().getGameState();
+            GameState gameState = Microbot.getClient().getGameState();
             boolean isHopping = Microbot.isHopping();
-            if (gameState == net.runelite.api.GameState.LOGGED_IN && !isHopping) {
+            if (gameState == GameState.LOGGED_IN && !isHopping) {
                 Microbot.log("[ApexFighter] processWorldHop: GameState=LOGGED_IN, isHopping=false - resuming scripts");
                 Microbot.pauseAllScripts.compareAndSet(true, false);
                 Microbot.log("[ApexFighter] World hop complete, resuming scripts.");
@@ -62,7 +70,7 @@ public class WorldHopManager {
 
         // Perform the hop on the client thread
         Microbot.getClientThread().invokeLater(() -> {
-            net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
+            WorldResult worldResult = Microbot.getWorldService().getWorlds();
             if (worldResult == null) {
                 Microbot.log("[ApexFighter] ERROR: Could not get world list for hop");
                 Microbot.pauseAllScripts.compareAndSet(true, false); // Resume if failed
@@ -70,10 +78,10 @@ public class WorldHopManager {
             }
 
             int currentWorld = Microbot.getClient().getWorld();
-            boolean isMember = Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS);
+            boolean isMember = Microbot.getClient().getWorldType().contains(WorldType.MEMBERS);
 
             // Filter for safe, not-full, not-current, correct type worlds
-            java.util.List<net.runelite.http.api.worlds.World> worlds = worldResult.getWorlds().stream()
+            List<World> worlds = worldResult.getWorlds().stream()
                 .filter(w -> w.getId() != currentWorld)
                 .filter(w -> w.getPlayers() < 2000)
                 .filter(w -> w.getTypes().stream().noneMatch(t ->
@@ -89,7 +97,7 @@ public class WorldHopManager {
                     t.toString().equals("FRESH_START_WORLD")
                 ))
                 .filter(w -> isMember == w.getTypes().stream().anyMatch(t -> t.toString().equals("MEMBERS")))
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
 
             if (worlds.isEmpty()) {
                 Microbot.log("[ApexFighter] ERROR: No suitable world found to hop - resuming scripts");
@@ -97,7 +105,7 @@ public class WorldHopManager {
                 return;
             }
 
-            net.runelite.http.api.worlds.World targetWorld = worlds.get(new java.util.Random().nextInt(worlds.size()));
+            World targetWorld = worlds.get(new Random().nextInt(worlds.size()));
 
             Microbot.log("[ApexFighter] Found " + worlds.size() + " suitable worlds, hopping to world: " + targetWorld.getId());
             
