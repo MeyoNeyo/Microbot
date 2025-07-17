@@ -30,6 +30,8 @@ import java.util.stream.Collectors;
 
 public class AttackNpcScript extends Script {
     private long lastMonsterFoundTime = System.currentTimeMillis();
+    private int consecutiveAttackFailures = 0;
+    private static final int MAX_CONSECUTIVE_FAILURES = 5;
 
     public static Actor currentNpc = null;
     public static AtomicReference<List<Rs2NpcModel>> filteredAttackableNpcs = new AtomicReference<>(new ArrayList<>());
@@ -54,14 +56,27 @@ public class AttackNpcScript extends Script {
                 // Don't check plugin state here as it can get stuck
                 if (!Microbot.isLoggedIn() || !super.run() || !config.toggleCombat())
                     return;
+                    
+                // Skip execution if scripts are paused (e.g., during world hopping)
+                if (Microbot.pauseAllScripts.get()) {
+                    return;
+                }
 
                 // Process world hop state first
                 WorldHopManager.processWorldHop();
+                
+                // Set state to IDLE when in center area but not in combat/banking
                 if(config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) < config.attackRadius() &&
-                        !config.centerLocation().equals(new WorldPoint(0, 0, 0)) &&  ApexFighterPlugin.getState() != State.BANKING) {
+                        !config.centerLocation().equals(new WorldPoint(0, 0, 0)) && 
+                        ApexFighterPlugin.getState() != State.BANKING && 
+                        ApexFighterPlugin.getState() != State.COMBAT &&
+                        !Rs2Combat.inCombat()) {
                     if(ShortestPathPlugin.getPathfinder() != null)
                         Rs2Walker.setTarget(null);
-                    ApexFighterPlugin.setState(State.IDLE);
+                    // Only set to IDLE if we're not already in a valid state
+                    if (ApexFighterPlugin.getState() == State.WALKING) {
+                        ApexFighterPlugin.setState(State.IDLE);
+                    }
                 }
 
                 attackableArea = new Rs2WorldArea(config.centerLocation().toWorldArea());
@@ -126,19 +141,30 @@ public class AttackNpcScript extends Script {
                         }
                     }
                     
-                    // PRIORITY CHECK: Banking has priority over world hopping
-                    if (net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config)) {
-                        if (maxPlayers > 0 && playersInArea >= maxPlayers) {
-                            Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to too many players. Banking takes priority!");
-                        }
-                        if (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters) {
-                            Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to no monsters. Banking takes priority!");
-                        }
-                        // Don't hop worlds, let banking system handle this
-                        return;
+                // PRIORITY CHECK: Banking has priority over world hopping
+                if (net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config)) {
+                    if (maxPlayers > 0 && playersInArea >= maxPlayers) {
+                        Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to too many players. Banking takes priority!");
                     }
-                    
-                    // World hop logic with pause/resume (only if banking is NOT needed)
+                    if (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters) {
+                        Microbot.log("[ApexFighter] ⚠️ BANKING NEEDED - Skipping world hop due to no monsters. Banking takes priority!");
+                    }
+                    // Don't hop worlds, but ALLOW combat to continue unless food is completely depleted
+                    // Check for critical banking needs (food depletion) - use simpler food check
+                    boolean criticalBanking = false;
+                    if (config.useFood()) {
+                        int foodCount = net.runelite.client.plugins.microbot.util.misc.Rs2Food.getIds().stream()
+                            .mapToInt(Rs2Inventory::count).sum();
+                        if (foodCount == 0) {
+                            criticalBanking = true;
+                        }
+                    }
+                    if (criticalBanking) {
+                        Microbot.log("[AttackNpc] CRITICAL - No food left, stopping combat for emergency banking");
+                        return; // Stop combat if no food
+                    }
+                    // Otherwise continue combat even if banking is needed (non-critical)
+                }                    // World hop logic with pause/resume (only if banking is NOT needed)
                     if ((maxPlayers > 0 && playersInArea >= maxPlayers) ||
                         (maxSecondsWithoutMonsters > 0 && secondsWithoutMonsters >= maxSecondsWithoutMonsters)) {
                         // Only hop if not already paused
@@ -158,8 +184,14 @@ public class AttackNpcScript extends Script {
                     lastMonsterFoundTime = System.currentTimeMillis();
                 }
 
-                if(config.state().equals(State.BANKING) || config.state().equals(State.WALKING))
+                if(ApexFighterPlugin.getState().equals(State.BANKING) || ApexFighterPlugin.getState().equals(State.WALKING))
                     return;
+                    
+                // PRIORITY CHECK: If banking is needed, don't attack - let banking system handle it
+                if (net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config)) {
+                    Microbot.log("[AttackNpc] Banking needed - skipping attack to prioritize banking");
+                    return;
+                }
 
                 if (config.toggleCenterTile() && config.centerLocation().getX() == 0
                         && config.centerLocation().getY() == 0) {
@@ -204,18 +236,124 @@ public class AttackNpcScript extends Script {
                     return;
                 }
 
+                // Reset state to IDLE if no longer in combat and no cooldown
+                if (ApexFighterPlugin.getState() == State.COMBAT && ApexFighterPlugin.getCooldown() <= 0 && !Rs2Combat.inCombat()) {
+                    Microbot.log("[AttackNpc] Combat finished, resetting to IDLE state");
+                    ApexFighterPlugin.setState(State.IDLE);
+                }
+
                 if (!attackableNpcs.isEmpty()) {
+                    Microbot.log("[AttackNpc] Found " + attackableNpcs.size() + " attackable NPCs, current state: " + ApexFighterPlugin.getState());
+                    ApexFighterPlugin.setState(State.COMBAT); // Set state to combat when about to attack
+                    Microbot.log("[AttackNpc] State set to COMBAT, proceeding with attack logic");
+                    // Check if we've had too many consecutive failures
+                    if (consecutiveAttackFailures >= MAX_CONSECUTIVE_FAILURES) {
+                        Microbot.log("[AttackNpc] Too many consecutive attack failures (" + consecutiveAttackFailures + "), waiting before retrying");
+                        consecutiveAttackFailures = 0; // Reset counter
+                        try {
+                            Thread.sleep(2000); // Wait 2 seconds before retrying
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                    
                     Rs2NpcModel npc = attackableNpcs.stream().findFirst().orElse(null);
+                    
+                    if (npc == null) {
+                        Microbot.log("[AttackNpc] No valid NPC found from filtered list");
+                        return;
+                    }
 
-                    if (!Rs2Camera.isTileOnScreen(npc.getLocalLocation()))
-                        Rs2Camera.turnTo(npc);
+                    // Check if camera needs adjustment and wait for it to complete
+                    if (!Rs2Camera.isTileOnScreen(npc.getLocalLocation())) {
+                        Microbot.log("[AttackNpc] Turning camera to " + npc.getName());
+                        
+                        try {
+                            // Use a smaller angle to prevent camera getting stuck
+                            int angle = Rs2Camera.getCharacterAngle(npc);
+                            Rs2Camera.setAngle(angle, 20); // Use smaller max angle for better control
+                            
+                            // Wait for camera movement to complete with timeout
+                            long cameraStartTime = System.currentTimeMillis();
+                            boolean cameraSuccess = false;
+                            
+                            while ((System.currentTimeMillis() - cameraStartTime) < 3000) { // 3 second timeout
+                                if (Rs2Camera.isTileOnScreen(npc.getLocalLocation())) {
+                                    cameraSuccess = true;
+                                    break;
+                                }
+                                try {
+                                    Thread.sleep(100);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    return;
+                                }
+                            }
+                            
+                            if (!cameraSuccess) {
+                                Microbot.log("[AttackNpc] Camera movement timed out, trying alternative approach");
+                                // Alternative: Try center tile on screen method
+                                Rs2Camera.centerTileOnScreen(npc.getLocalLocation(), 15.0);
+                                
+                                // One more check with shorter timeout
+                                cameraStartTime = System.currentTimeMillis();
+                                while ((System.currentTimeMillis() - cameraStartTime) < 1500) {
+                                    if (Rs2Camera.isTileOnScreen(npc.getLocalLocation())) {
+                                        cameraSuccess = true;
+                                        break;
+                                    }
+                                    try {
+                                        Thread.sleep(100);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        return;
+                                    }
+                                }
+                            }
+                            
+                            // Final check - if camera still failed, skip this NPC
+                            if (!cameraSuccess || !Rs2Camera.isTileOnScreen(npc.getLocalLocation())) {
+                                Microbot.log("[AttackNpc] Camera failed to turn to NPC after multiple attempts, skipping attack this cycle");
+                                consecutiveAttackFailures++;
+                                return;
+                            }
+                            
+                            Microbot.log("[AttackNpc] Camera successfully positioned for " + npc.getName());
+                            
+                        } catch (Exception e) {
+                            Microbot.log("[AttackNpc] Error during camera movement: " + e.getMessage());
+                            consecutiveAttackFailures++;
+                            return;
+                        }
+                    }
 
-                    Rs2Npc.interact(npc, "attack");
-                    Microbot.status = "Attacking " + npc.getName();
-                    ApexFighterPlugin.setCooldown(config.playStyle().getRandomTickInterval());
+                    // Attempt to attack the NPC
+                    Microbot.log("[AttackNpc] Attempting to attack " + npc.getName());
+                    boolean attackSuccess = Rs2Npc.interact(npc, "attack");
+                    
+                    if (attackSuccess) {
+                        Microbot.status = "Attacking " + npc.getName();
+                        ApexFighterPlugin.setCooldown(config.playStyle().getRandomTickInterval());
+                        Microbot.log("[AttackNpc] Successfully initiated attack on " + npc.getName());
+                        consecutiveAttackFailures = 0; // Reset failure counter on success
+                    } else {
+                        consecutiveAttackFailures++;
+                        Microbot.log("[AttackNpc] Failed to attack " + npc.getName() + ", will retry next cycle (failure count: " + consecutiveAttackFailures + ")");
+                        // Don't set cooldown if attack failed, allow immediate retry
+                    }
 
                 } else {
-                    Microbot.log("Standing still: no attackable NPCs and not hopping.");
+                    // Only log every 5 seconds to avoid spam
+                    if (System.currentTimeMillis() % 5000 < 600) {
+                        Microbot.log("[AttackNpc] No attackable NPCs found - Total filtered: " + filteredAttackableNpcs.get().size() + 
+                                   ", In area: " + inTargetArea + ", State: " + ApexFighterPlugin.getState());
+                    }
+                    consecutiveAttackFailures = 0; // Reset counter when no NPCs found
+                    // If we're in combat state but no monsters found, reset to IDLE
+                    if (ApexFighterPlugin.getState() == State.COMBAT && !Rs2Combat.inCombat()) {
+                        ApexFighterPlugin.setState(State.IDLE);
+                    }
                 }
             } catch (Exception ex) {
                 Microbot.logStackTrace(this.getClass().getSimpleName(), ex);

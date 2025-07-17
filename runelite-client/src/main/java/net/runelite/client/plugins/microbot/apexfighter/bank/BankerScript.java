@@ -107,23 +107,38 @@ public class BankerScript extends Script {
                         // After banking, walk to center if not already there
                         if (config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius()) {
                             ApexFighterPlugin.setState(State.WALKING);
-                            // Temporarily disable teleports to prevent getting stuck on teleport dialogues
+                            log.info("[run] Walking back to combat area from bank");
+                            
+                            // Always disable teleports for banking returns to prevent getting stuck
                             boolean originalDisableTeleports = Rs2Walker.disableTeleports;
                             try {
-                                // Disable teleports only if user has configured to ignore them for banking
-                                if (config.ignoreTeleport()) {
-                                    Rs2Walker.disableTeleports = true;
-                                    log.info("[run] Disabled teleports for walking back to combat area");
+                                Rs2Walker.disableTeleports = true;
+                                log.info("[run] Disabled teleports for safe walking back to combat area");
+                                
+                                // Use timeout for walking to prevent infinite waiting
+                                boolean walkSuccess = Rs2Walker.walkTo(config.centerLocation(), 10);
+                                if (!walkSuccess) {
+                                    log.warn("[run] Walking back to combat area timed out, continuing anyway");
                                 }
-                                Rs2Walker.walkTo(config.centerLocation());
+                                
+                                // Wait for arrival with timeout
+                                Rs2Player.waitForWalking(5000);
+                                boolean arrived = config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius();
+                                if (arrived) {
+                                    log.info("[run] Successfully returned to combat area");
+                                    ApexFighterPlugin.setState(State.IDLE);
+                                } else {
+                                    log.warn("[run] Failed to reach combat area, will retry next cycle");
+                                    ApexFighterPlugin.setState(State.IDLE); // Reset state anyway
+                                }
+                                
                             } finally {
                                 // Always restore the original teleport setting
                                 Rs2Walker.disableTeleports = originalDisableTeleports;
-                                if (originalDisableTeleports != Rs2Walker.disableTeleports) {
-                                    log.info("[run] Restored teleport setting to: {}", originalDisableTeleports);
-                                }
+                                log.info("[run] Restored teleport setting to: {}", originalDisableTeleports);
                             }
                         } else {
+                            log.info("[run] Already in combat area after banking");
                             ApexFighterPlugin.setState(State.IDLE);
                         }
                     } else {
@@ -133,20 +148,32 @@ public class BankerScript extends Script {
                     }
                 } else if (!needsBanking() && config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) > config.attackRadius() && !Objects.equals(config.centerLocation(), new WorldPoint(0, 0, 0))) {
                     ApexFighterPlugin.setState(State.WALKING);
-                    // Temporarily disable teleports to prevent getting stuck on teleport dialogues
+                    log.info("[run] Walking to combat area (not banking)");
+                    
+                    // Always disable teleports to prevent getting stuck on teleport dialogues
                     boolean originalDisableTeleports = Rs2Walker.disableTeleports;
                     try {
-                        // Disable teleports only if user has configured to ignore them for banking
-                        if (config.ignoreTeleport()) {
-                            Rs2Walker.disableTeleports = true;
-                            log.info("[run] Disabled teleports for walking to combat area");
-                        }
-                        if (Rs2Walker.walkTo(config.centerLocation())) {
+                        Rs2Walker.disableTeleports = true;
+                        log.info("[run] Disabled teleports for safe walking to combat area");
+                        
+                        boolean walkSuccess = Rs2Walker.walkTo(config.centerLocation(), 10);
+                        if (walkSuccess) {
+                            Rs2Player.waitForWalking(5000);
+                            if (config.centerLocation().distanceTo(Rs2Player.getWorldLocation()) <= config.attackRadius()) {
+                                log.info("[run] Successfully reached combat area");
+                                ApexFighterPlugin.setState(State.IDLE);
+                            } else {
+                                log.warn("[run] Walking to combat area incomplete, will retry");
+                                ApexFighterPlugin.setState(State.IDLE); // Reset state anyway
+                            }
+                        } else {
+                            log.warn("[run] Failed to start walking to combat area");
                             ApexFighterPlugin.setState(State.IDLE);
                         }
                     } finally {
                         // Always restore the original teleport setting
                         Rs2Walker.disableTeleports = originalDisableTeleports;
+                        log.info("[run] Restored teleport setting to: {}", originalDisableTeleports);
                     }
                 }
             } catch (Exception ex) {
@@ -241,8 +268,16 @@ public class BankerScript extends Script {
                 .mapToInt(Rs2ItemModel::getQuantity)
                 .sum();
             if (requiredAmount != null) {
-                if (currentAmount < requiredAmount) {
-                    return true;
+                if (requiredAmount == Integer.MAX_VALUE) {
+                    // 'all' means at least 1
+                    if (currentAmount < 1) {
+                        return true;
+                    }
+                } else {
+                    // For a number, only require banking if you have less than that number
+                    if (currentAmount < requiredAmount) {
+                        return true;
+                    }
                 }
             } else {
                 if (currentAmount < 1) {

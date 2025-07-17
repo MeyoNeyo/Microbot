@@ -108,11 +108,21 @@ public class ApexFighterPlugin extends Plugin {
      */
     private void setTopDownCameraView() {
         if (Microbot.getClient() == null || cameraConfigured) return;
-        Microbot.getClient().setCameraPitchTarget(383);
-        Microbot.getClient().setCameraYawTarget(0);
-        Microbot.getClient().setCameraShakeDisabled(true);
-        cameraConfigured = true;
-        Microbot.status = "Camera set to top-down view.";
+        
+        // Use clientThread to ensure camera operations run safely
+        Microbot.getClientThread().invokeLater(() -> {
+            try {
+                Microbot.getClient().setCameraPitchTarget(383);
+                Microbot.getClient().setCameraYawTarget(0);
+                Microbot.getClient().setCameraShakeDisabled(true);
+                cameraConfigured = true;
+                // Use temporary status message that doesn't persist
+                log.info("[ApexFighter] Camera configured to top-down view");
+            } catch (Exception e) {
+                log.warn("[ApexFighter] Failed to configure camera: {}", e.getMessage());
+                cameraConfigured = true; // Mark as configured anyway to prevent retries
+            }
+        });
     }
     // Track seconds without monsters for hop logic - MOVED TO AttackNpcScript
     // private int secondsWithoutMonsters = 0; // No longer used - AttackNpcScript handles this
