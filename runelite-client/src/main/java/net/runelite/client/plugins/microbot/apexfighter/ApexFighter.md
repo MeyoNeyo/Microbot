@@ -1,7 +1,7 @@
 # To Be Implemented
 
 - **Safespot Manual Coordinate Textbox:**
-  - Add a textbox in the plugin settings to allow users to manually enter safespot coordinates (similar to the manual center tile/area input).
+  - Add a textbox in the plugin config settings to allow users to manually enter safespot coordinates (similar to the manual center tile/area input).
   - This will let users specify the safespot location directly by entering X, Y, and plane values.
   - Not yet implemented as of July 2025.
 
@@ -17,15 +17,18 @@
   - The setting should be an integer input box in the menu for easy adjustment.
   - Not yet implemented as of July 2025.
 
-- **(Future) Grand Exchange Refill:**
+- **Grand Exchange Refill:**
   - If food, ammo, runes, or equipment are depleted (including after death), automatically buy required items from the Grand Exchange and restock the bank.
-  - This feature is planned for a future update.
 
 - **Total Costs of Current Run:**
   - Track and display the total costs incurred during the current session, including rune usage, arrows, and food consumed.
   - Calculate costs using GE prices for each resource type used.
   - Show total cost in the overlay alongside profit/loot value.
-  - This feature is planned for a future update.
+
+  **monster kill per hour:**
+  - Track and display the number of monster kills per hour in the overlay.
+
+
 
 # Implemented Features
 
