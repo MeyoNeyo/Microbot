@@ -15,4 +15,7 @@ public class LootEntry {
     public String getName() { return name; }
     public int getQuantity() { return quantity; }
     public void addQuantity(int amount) { this.quantity += amount; }
+    public void subtractQuantity(int amount) { 
+        this.quantity = Math.max(0, this.quantity - amount); 
+    }
 }

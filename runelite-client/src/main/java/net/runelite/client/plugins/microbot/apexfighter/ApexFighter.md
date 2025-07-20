@@ -1,21 +1,28 @@
 # To Be Implemented
 
+- **Scrollable Loot/Profit Tracker Panel:**
+  - Move the loot and profit tracker to a dedicated plugin panel (like the bank/GE panels with buttons).
+  - The panel should display all looted items and profit, and allow scrolling if the list becomes long.
+  - This will improve usability for long sessions and large loot lists, making it easier to review all tracked items and profit.
+
 - **Safespot Manual Coordinate Textbox:**
   - Add a textbox in the plugin config settings to allow users to manually enter safespot coordinates (similar to the manual center tile/area input).
   - This will let users specify the safespot location directly by entering X, Y, and plane values.
-  - Not yet implemented as of July 2025.
+
+**auto alchemy:**
+  - Implement an automatic alchemy feature that detects when there are drops that are high alchemy profit.(at least so that the cost of the runes is less than the profit of the item)
+  - The script should use GE price checks to determine if an item is worth alching.
+  - If an item is eligible for alchemy, the script should automatically pickup the items from ground and cast high alchemy on it.
 
 - **Magic Rune Check:**
   - Before attacking with magic, the script should check if the player has enough runes to cast the selected spell (using `Rs2Magic.canCast` or similar).
   - If the player runs out of runes, the script should stop attacking with magic or switch to another combat style, or notify the user.
-  - This feature is not yet implemented as of July 2025.
 
 - **Configurable Auto-Eat Percentage:**
   - Add a setting in the plugin menu to let the user specify at what health percentage the player should eat food (e.g., 40%, 60%, etc.).
-  - or add like scurrus plugin 2 boxes for min and max health percentage to eat food. or just 1 box for min health percentage. but this needs to be analyzed to see what is the best practice.
+  - or add like scurrus plugin 2 boxes for min and max health percentage to eat food. or just 1 box for min health percentage. but this needs to be analyzed to see what is the best practice or best to code.
   - Implement logic so the script automatically eats food when the player's health drops below this percentage.
-  - The setting should be an integer input box in the menu for easy adjustment.
-  - Not yet implemented as of July 2025.
+  - The setting should be an integer input box in the menu for easy adjustment in config file.
 
 - **Grand Exchange Refill:**
   - If food, ammo, runes, or equipment are depleted (including after death), automatically buy required items from the Grand Exchange and restock the bank.
@@ -28,9 +35,10 @@
   **monster kill per hour:**
   - Track and display the number of monster kills per hour in the overlay.
 
-
-
 # Implemented Features
+
+- **Loot Tracking for Buried/Scattered Items:**
+  - When bones are in loot and bury bones is enabled: if bones are picked up they count as profit, but if they're buried they're removed from the loot tracker. Same applies to ashes and scattering. (Implemented July 2025)
 
 - **Bury Bones Only Option:**
   - The script now only buries bones found on the ground, without picking them up first. The logic for picking up bones has been removed. (Implemented July 2025)

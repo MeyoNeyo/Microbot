@@ -39,7 +39,9 @@ public class BuryScatterScript extends Script
 		{
 			return;
 		}
-		Rs2Inventory.interact(items.get(0), action);
+		
+		Rs2ItemModel item = items.get(0);
+		Rs2Inventory.interact(item, action);
 		Rs2Player.waitForAnimation();
 	}
 

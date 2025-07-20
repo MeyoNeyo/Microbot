@@ -378,18 +378,38 @@ public class ApexFighterPlugin extends Plugin {
             int oldQty = previousInventory.getOrDefault(itemId, 0);
             int diff = newQty - oldQty;
             if (diff > 0) {
-                // See if this matches a recent despawned ground item
+                // Item was added - see if this matches a recent despawned ground item
                 DespawnedGroundItem match = this.recentDespawnedItems.stream()
                     .filter(i -> i.itemId == itemId && i.quantity == diff)
                     .findFirst().orElse(null);
                 if (match != null) {
-                    sessionLoot.compute(itemId, (id, lootEntry) -> {
-                        String itemName = match.itemName;
-                        if (lootEntry == null) return new LootEntry(id, itemName, diff);
-                        lootEntry.addQuantity(diff);
-                        return lootEntry;
-                    });
+                    // Check if this item should be tracked as profit
+                    if (shouldTrackAsProfit(itemId, match.itemName)) {
+                        sessionLoot.compute(itemId, (id, lootEntry) -> {
+                            String itemName = match.itemName;
+                            if (lootEntry == null) return new LootEntry(id, itemName, diff);
+                            lootEntry.addQuantity(diff);
+                            return lootEntry;
+                        });
+                    }
                     this.recentDespawnedItems.remove(match);
+                }
+            } else if (diff < 0) {
+                // Item was removed from inventory
+                int removedQty = Math.abs(diff);
+                
+                // Check if this was a bone/ash that was buried/scattered
+                try {
+                    String itemName = Microbot.getItemManager().getItemComposition(itemId).getName();
+                    boolean isBoneAndBuryEnabled = isBoneByName(itemName) && config.toggleBuryBones();
+                    boolean isAshAndScatterEnabled = isAshByName(itemName) && config.toggleScatter();
+                    
+                    if (isBoneAndBuryEnabled || isAshAndScatterEnabled) {
+                        // Remove from loot tracker since it was buried/scattered
+                        removeFromLootTracker(itemId, removedQty);
+                    }
+                } catch (Exception e) {
+                    // Ignore errors in item name lookup
                 }
             }
         }
@@ -397,6 +417,96 @@ public class ApexFighterPlugin extends Plugin {
         previousInventory.clear();
         previousInventory.putAll(currentInventory);
     }
+    
+    /**
+     * Determines if an item should be tracked as profit based on bury/scatter settings.
+     * Returns false if the item is a bone and bury bones is enabled,
+     * or if the item is ash and scatter is enabled.
+     */
+    private boolean shouldTrackAsProfit(int itemId, String itemName) {
+        // Check if it's a bone and burying is enabled
+        if (isBone(itemId, itemName) && config.toggleBuryBones()) {
+            return false;
+        }
+        
+        // Check if it's ash and scattering is enabled
+        if (isAsh(itemId, itemName) && config.toggleScatter()) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Checks if an item is a bone by checking if it has the "bury" action.
+     */
+    private boolean isBone(int itemId, String itemName) {
+        try {
+            var itemComposition = Microbot.getClientThread().runOnClientThreadOptional(() -> 
+                Microbot.getItemManager().getItemComposition(itemId)).orElse(null);
+            if (itemComposition != null) {
+                String[] actions = itemComposition.getInventoryActions();
+                return actions != null && Arrays.stream(actions).anyMatch("Bury"::equals);
+            }
+        } catch (Exception e) {
+            Microbot.log("Error checking if item is bone: " + e.getMessage());
+        }
+        // Fallback: check by name if getting actions fails
+        return itemName != null && itemName.toLowerCase().contains("bone");
+    }
+    
+    /**
+     * Checks if an item is ash by checking if it has the "scatter" action.
+     */
+    private boolean isAsh(int itemId, String itemName) {
+        try {
+            var itemComposition = Microbot.getClientThread().runOnClientThreadOptional(() -> 
+                Microbot.getItemManager().getItemComposition(itemId)).orElse(null);
+            if (itemComposition != null) {
+                String[] actions = itemComposition.getInventoryActions();
+                return actions != null && Arrays.stream(actions).anyMatch("Scatter"::equals);
+            }
+        } catch (Exception e) {
+            Microbot.log("Error checking if item is ash: " + e.getMessage());
+        }
+        // Fallback: check by name if getting actions fails
+        return itemName != null && itemName.toLowerCase().contains("ash");
+    }
+    
+    /**
+     * Simple name-based bone detection to avoid thread issues.
+     */
+    private boolean isBoneByName(String itemName) {
+        if (itemName == null) return false;
+        String lowerName = itemName.toLowerCase();
+        return lowerName.contains("bone") || lowerName.contains("bones");
+    }
+    
+    /**
+     * Simple name-based ash detection to avoid thread issues.
+     */
+    private boolean isAshByName(String itemName) {
+        if (itemName == null) return false;
+        String lowerName = itemName.toLowerCase();
+        return lowerName.contains("ash") || lowerName.contains("ashes");
+    }
+    
+    /**
+     * Removes an item from the loot tracker when it's buried/scattered.
+     * This ensures that buried bones and scattered ashes are not counted as profit.
+     */
+    public static void removeFromLootTracker(int itemId, int quantity) {
+        LootEntry entry = sessionLoot.get(itemId);
+        if (entry != null) {
+            entry.subtractQuantity(quantity);
+            // If quantity reaches 0 or below, remove the entry entirely
+            if (entry.getQuantity() <= 0) {
+                sessionLoot.remove(itemId);
+            }
+            Microbot.log("Removed " + quantity + " x " + entry.getName() + " from loot tracker (buried/scattered)");
+        }
+    }
+    
     public static void resetLocation() {
         setCenter(new WorldPoint(0, 0, 0));
         setSafeSpot(new WorldPoint(0, 0, 0));
