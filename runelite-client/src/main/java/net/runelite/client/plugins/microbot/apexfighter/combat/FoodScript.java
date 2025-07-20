@@ -57,6 +57,8 @@ public class FoodScript extends Script {
                 }
                 for (Rs2ItemModel food : foods) {
                     Rs2Inventory.interact(food, "eat");
+                    // Track food usage in CostTracker
+                    net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().addUsage(food.getId(), 1);
                     sleep(1200, 2000);
                     break;
                 }

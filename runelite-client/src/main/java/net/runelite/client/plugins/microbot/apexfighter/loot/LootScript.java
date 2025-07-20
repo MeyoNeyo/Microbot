@@ -1,5 +1,7 @@
 package net.runelite.client.plugins.microbot.apexfighter.loot;
 
+
+
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
@@ -24,6 +26,21 @@ public class LootScript extends Script {
 
 
     public boolean run(ApexFighterConfig config) {
+
+
+        // Fetch GE prices for tracked resources at session start (example IDs, replace as needed)
+        int[] trackedItemIds = {
+            385, // Shark
+            379, // Lobster
+            561, // Nature rune
+            554, // Fire rune
+            892, // Rune arrow
+            882  // Bronze arrow
+        };
+        for (int itemId : trackedItemIds) {
+            int gePrice = net.runelite.client.plugins.microbot.Microbot.getItemManager().getItemPrice(itemId);
+            net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().setGEPrice(itemId, gePrice);
+        }
 
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {

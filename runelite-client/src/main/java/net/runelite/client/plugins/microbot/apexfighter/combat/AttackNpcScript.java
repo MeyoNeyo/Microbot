@@ -29,6 +29,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 public class AttackNpcScript extends Script {
+    // Example: Track arrow usage (call this when an arrow is fired)
+    @SuppressWarnings("unused")
+    private void trackArrowUsage(int arrowId) {
+        net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().addUsage(arrowId, 1);
+    }
     private long lastMonsterFoundTime = System.currentTimeMillis();
     private int consecutiveAttackFailures = 0;
     private static final int MAX_CONSECUTIVE_FAILURES = 5;

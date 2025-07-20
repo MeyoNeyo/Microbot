@@ -34,6 +34,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript;
 import net.runelite.client.plugins.microbot.apexfighter.cannon.CannonScript;
+import net.runelite.client.plugins.microbot.apexfighter.CostTracker;
 import net.runelite.client.plugins.microbot.apexfighter.combat.AttackNpcScript;
 import net.runelite.client.plugins.microbot.apexfighter.combat.BuryScatterScript;
 import net.runelite.client.plugins.microbot.apexfighter.combat.FlickerScript;
@@ -43,11 +44,6 @@ import net.runelite.client.plugins.microbot.apexfighter.combat.PotionManagerScri
 import net.runelite.client.plugins.microbot.apexfighter.combat.PrayerScript;
 import net.runelite.client.plugins.microbot.apexfighter.combat.SafeSpot;
 import net.runelite.client.plugins.microbot.apexfighter.combat.UseSpecialAttackScript;
-
-// ...existing code...
-
-// Ensure the class is closed properly
-// ...existing code...
 import net.runelite.client.plugins.microbot.apexfighter.enums.PrayerStyle;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
 import net.runelite.client.plugins.microbot.apexfighter.LootEntry;

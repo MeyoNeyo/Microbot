@@ -52,13 +52,40 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .right("Version:" + ApexFighterPlugin.version)
                     .build());
 
-            // --- Loot Tracking Overlay ---
-            if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
-                long totalValue = ApexFighterPlugin.getTotalLootValue();
+            // --- Loot/Cost/Profit Tracking Overlay ---
+            long totalValue = ApexFighterPlugin.getTotalLootValue();
+            int totalCost = net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().getTotalCost();
+            long profit = totalValue - totalCost;
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Total Loot Value:")
+                    .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Total Cost:")
+                    .right(ApexFighterPlugin.formatGp(totalCost) + " gp")
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Profit:")
+                    .right(ApexFighterPlugin.formatGp(profit) + " gp")
+                    .build());
+
+            // Show resource usage breakdown
+            panelComponent.getChildren().add(LineComponent.builder().left("Resource Usage:").build());
+            for (Map.Entry<Integer, Integer> entry : net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().getResourceUsage().entrySet()) {
+                int itemId = entry.getKey();
+                int qty = entry.getValue();
+                String itemName = "";
+                try {
+                    itemName = Microbot.getItemManager().getItemComposition(itemId).getName();
+                } catch (Exception ignored) {}
                 panelComponent.getChildren().add(LineComponent.builder()
-                        .left("Total Loot Value:")
-                        .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
+                        .left(itemName.isEmpty() ? ("ID: " + itemId) : itemName)
+                        .right("x" + qty)
                         .build());
+            }
+
+            // Show looted items as before
+            if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
                 panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());
                 for (LootEntry entry : ApexFighterPlugin.sessionLoot.values()) {
                     panelComponent.getChildren().add(LineComponent.builder()
