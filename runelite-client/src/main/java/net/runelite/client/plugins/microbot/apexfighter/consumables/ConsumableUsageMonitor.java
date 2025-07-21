@@ -69,22 +69,29 @@ public class ConsumableUsageMonitor {
             // Create a temporary Rs2ItemModel for checking item type
             Rs2ItemModel tempItem = createTempItemModel(itemId, itemName, itemComposition);
             
-            if (shouldTrackConsumption(tempItem, config)) {
-                // Track this as consumption
+            // Only track as a cost if the item was actually consumed/lost, not banked
+            if (shouldTrackConsumption(tempItem, config) && !wasItemBanked(itemId, quantityDecrease, tempItem)) {
                 tracker.trackConsumableUsage(itemId, quantityDecrease);
-                
-                // Update price if we don't have it yet
                 if (CostTracker.getInstance().getGEPrice(itemId) == 0) {
                     tracker.updateItemPrice(itemId);
                 }
-                
-                // Log the consumption with category information for better debugging
                 String category = getConsumableCategory(tempItem);
                 Microbot.log("Tracked " + category + " consumption: " + quantityDecrease + "x " + itemName);
             }
         } catch (Exception e) {
             Microbot.log("Error tracking consumption for item " + itemId + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * Determines if the item was banked (deposited) rather than consumed/lost.
+     * This should be replaced with a more robust context-aware check if available.
+     */
+    private boolean wasItemBanked(int itemId, int quantityDecrease, Rs2ItemModel item) {
+        // TODO: Replace with a more robust check if banking context is available
+        // For now, we assume that if the player is at the bank interface, items are being banked
+        // You may want to add a flag or context from the plugin to indicate banking actions
+        return net.runelite.client.plugins.microbot.util.bank.Rs2Bank.isOpen();
     }
     
     /**
