@@ -161,6 +161,17 @@ public interface ApexFighterConfig extends Config {
         return false;
     }
 
+    @ConfigItem(
+            keyName = "manualSafeSpotCoords",
+            name = "Manual Safe Spot Coordinates",
+            description = "Coordinates of the manually set safe spot (format: x,y,z)",
+            position = 6, // right after safe spot toggle
+            section = combatSection
+    )
+    default String manualSafeSpotCoords() {
+        return "";
+    }
+
 
     //PlayStyle
     @ConfigItem(
@@ -463,7 +474,7 @@ public interface ApexFighterConfig extends Config {
             keyName = "Center Tile",
             name = "Manual Center Tile",
             description = "Shift Right-click the ground to select the center tile",
-            position = 6,
+            position = 7,
             section = combatSection
     )
     default boolean toggleCenterTile() {
@@ -474,7 +485,7 @@ public interface ApexFighterConfig extends Config {
             keyName = "manualCenterTileCoords",
             name = "Manual Center Tile Coordinates",
             description = "Coordinates of the manually set center tile (format: x,y,z)",
-            position = 7, // right after manual center tile
+            position = 8, // right after manual center tile
             section = combatSection
     )
     default String manualCenterTileCoords() {

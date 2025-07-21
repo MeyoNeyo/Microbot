@@ -291,6 +291,22 @@ public class ApexFighterPlugin extends Plugin {
         } else if (!config.toggleCenterTile() && Microbot.isLoggedIn()) {
             setCenter(Rs2Player.getWorldLocation());
         }
+        
+        // Ensure safeSpot is set from manualSafeSpotCoords if needed
+        if (config.toggleSafeSpot() && Microbot.isLoggedIn()) {
+            String coords = config.manualSafeSpotCoords();
+            if (coords != null && !coords.isEmpty()) {
+                String[] parts = coords.split(",");
+                if (parts.length == 3) {
+                    try {
+                        int x = Integer.parseInt(parts[0].trim());
+                        int y = Integer.parseInt(parts[1].trim());
+                        int z = Integer.parseInt(parts[2].trim());
+                        setSafeSpot(new WorldPoint(x, y, z));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
         lootScript.run(config);
         cannonScript.run(config);
         attackNpc.run(config);
@@ -596,6 +612,20 @@ public class ApexFighterPlugin extends Plugin {
                 }
             }
         }
+        if (event.getKey().equals("manualSafeSpotCoords")) {
+            String coords = config.manualSafeSpotCoords();
+            if (coords != null && !coords.isEmpty()) {
+                String[] parts = coords.split(",");
+                if (parts.length == 3) {
+                    try {
+                        int x = Integer.parseInt(parts[0].trim());
+                        int y = Integer.parseInt(parts[1].trim());
+                        int z = Integer.parseInt(parts[2].trim());
+                        setSafeSpot(new WorldPoint(x, y, z));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
         if(event.getKey().equals("Center Tile")) {
             // If manual center tile is turned off, do NOT update the textbox or set a new center tile
             // Just leave the current center tile as is
@@ -612,6 +642,26 @@ public class ApexFighterPlugin extends Plugin {
                         } catch (NumberFormatException ignored) {}
                     }
                 }
+            }
+        }
+        if(event.getKey().equals("Safe Spot")) {
+            // When safe spot toggle is changed, if enabled and manual coordinates exist, apply them
+            if (config.toggleSafeSpot()) {
+                String coords = config.manualSafeSpotCoords();
+                if (coords != null && !coords.isEmpty()) {
+                    String[] parts = coords.split(",");
+                    if (parts.length == 3) {
+                        try {
+                            int x = Integer.parseInt(parts[0].trim());
+                            int y = Integer.parseInt(parts[1].trim());
+                            int z = Integer.parseInt(parts[2].trim());
+                            setSafeSpot(new WorldPoint(x, y, z));
+                        } catch (NumberFormatException ignored) {}
+                    }
+                }
+            } else {
+                // If safe spot is disabled, reset to default
+                setSafeSpot(new WorldPoint(0, 0, 0));
             }
         }
     }
@@ -769,6 +819,13 @@ public class ApexFighterPlugin extends Plugin {
             WorldPoint selected = getSelectedWorldPoint();
             if (selected != null) {
                 setSafeSpot(selected);
+                // Also update the manual safe spot coordinates textbox
+                String coords = selected.getX() + "," + selected.getY() + "," + selected.getPlane();
+                Microbot.getConfigManager().setConfiguration(
+                    "PlayerAssistant",
+                    "manualSafeSpotCoords",
+                    coords
+                );
             }
         }
     }
