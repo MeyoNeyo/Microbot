@@ -67,7 +67,6 @@ import net.runelite.api.Hitsplat;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 
 @PluginDescriptor(
@@ -249,6 +248,11 @@ public class ApexFighterPlugin extends Plugin {
             }
         }
         recentDespawnedItems.clear();
+        
+        // Initialize consumable usage monitoring
+        net.runelite.client.plugins.microbot.apexfighter.consumables.ConsumableUsageMonitor.getInstance()
+                .initialize(previousInventory);
+        
         Microbot.pauseAllScripts.compareAndSet(true, false);
         cooldown = 0;
         ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
@@ -308,6 +312,11 @@ public class ApexFighterPlugin extends Plugin {
     protected void shutDown() {
         startTime = null;
         sessionLoot.clear();
+        
+        // Reset consumable usage monitoring
+        net.runelite.client.plugins.microbot.apexfighter.consumables.ConsumableUsageMonitor.getInstance().reset();
+        net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().reset();
+        
         lootScript.shutdown();
         cannonScript.shutdown();
         attackNpc.shutdown();
@@ -409,6 +418,10 @@ public class ApexFighterPlugin extends Plugin {
                 }
             }
         }
+
+        // Update consumable usage monitoring
+        net.runelite.client.plugins.microbot.apexfighter.consumables.ConsumableUsageMonitor.getInstance()
+                .updateInventoryState(currentInventory, config);
 
         previousInventory.clear();
         previousInventory.putAll(currentInventory);
@@ -537,22 +550,7 @@ public class ApexFighterPlugin extends Plugin {
                 state
         );
     }
-    private void addNpcToList(String npcName) {
-        configManager.setConfiguration(
-                "PlayerAssistant",
-                "monster",
-                config.attackableNpcs() + npcName + ","
-        );
-    }
-    private void removeNpcFromList(String npcName) {
-        configManager.setConfiguration(
-                "PlayerAssistant",
-                "monster",
-                Arrays.stream(config.attackableNpcs().split(","))
-                        .filter(n -> !n.equalsIgnoreCase(npcName))
-                        .collect(Collectors.joining(","))
-        );
-    }
+    
     public static void setAttackableNpcs(String npcNames) {
         Microbot.getConfigManager().setConfiguration(
                 "PlayerAssistant",
