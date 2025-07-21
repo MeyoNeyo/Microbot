@@ -76,7 +76,16 @@ public class ConsumableUsageMonitor {
                     tracker.updateItemPrice(itemId);
                 }
                 String category = getConsumableCategory(tempItem);
-                Microbot.log("Tracked " + category + " consumption: " + quantityDecrease + "x " + itemName);
+                int price = CostTracker.getInstance().getGEPrice(itemId);
+                int totalCost = price * quantityDecrease;
+                Microbot.log("Tracked " + category + " consumption: " + quantityDecrease + "x " + itemName + " (Cost: " + totalCost + " gp)");
+            } else {
+                // Log why consumption was not tracked for debugging
+                if (!shouldTrackConsumption(tempItem, config)) {
+                    Microbot.log("Skipped tracking " + itemName + " - not a trackable consumable");
+                } else if (wasItemBanked(itemId, quantityDecrease, tempItem)) {
+                    Microbot.log("Skipped tracking " + itemName + " - item was banked, not consumed");
+                }
             }
         } catch (Exception e) {
             Microbot.log("Error tracking consumption for item " + itemId + ": " + e.getMessage());
@@ -85,13 +94,43 @@ public class ConsumableUsageMonitor {
 
     /**
      * Determines if the item was banked (deposited) rather than consumed/lost.
-     * This should be replaced with a more robust context-aware check if available.
+     * Items should only be tracked as costs if they are actually lost/consumed, not banked.
      */
     private boolean wasItemBanked(int itemId, int quantityDecrease, Rs2ItemModel item) {
-        // TODO: Replace with a more robust check if banking context is available
-        // For now, we assume that if the player is at the bank interface, items are being banked
-        // You may want to add a flag or context from the plugin to indicate banking actions
-        return net.runelite.client.plugins.microbot.util.bank.Rs2Bank.isOpen();
+        // If bank is open, assume items are being banked
+        if (net.runelite.client.plugins.microbot.util.bank.Rs2Bank.isOpen()) {
+            return true;
+        }
+        
+        // Check if we're in a banking state (walking to bank, etc.)
+        try {
+            var currentState = net.runelite.client.plugins.microbot.apexfighter.ApexFighterPlugin.getState();
+            if (currentState != null && 
+                (currentState.name().contains("BANKING") || currentState.name().contains("WALKING"))) {
+                return true;
+            }
+        } catch (Exception e) {
+            // Ignore state check errors
+        }
+        
+        // For ammunition, use more specific logic to determine if it was truly consumed
+        if (tracker.isAmmunition(item)) {
+            // Check if we're actively fighting or have recently been in combat
+            boolean recentCombat = net.runelite.client.plugins.microbot.util.combat.Rs2Combat.inCombat() ||
+                                 net.runelite.client.plugins.microbot.util.player.Rs2Player.isInCombat() ||
+                                 net.runelite.client.plugins.microbot.util.player.Rs2Player.isAnimating();
+            
+            // If there's no sign of combat activity, consider it banked
+            // But allow for small quantities (1-5) which are likely genuine consumption
+            if (!recentCombat && quantityDecrease > 5) {
+                return true; // Large decrease without combat = likely banked
+            }
+            
+            // For small quantities or during combat, assume genuine consumption
+            return false;
+        }
+        
+        return false;
     }
     
     /**
@@ -220,5 +259,36 @@ public class ConsumableUsageMonitor {
             }
         }
         Microbot.log("=====================================");
+    }
+    
+    /**
+     * Logs current consumption costs and usage statistics for debugging.
+     */
+    public void logConsumptionCosts() {
+        var costTracker = CostTracker.getInstance();
+        var usage = costTracker.getResourceUsage();
+        
+        Microbot.log("=== Consumption Cost Breakdown ===");
+        if (usage.isEmpty()) {
+            Microbot.log("No items tracked yet.");
+        } else {
+            int totalCost = 0;
+            for (Map.Entry<Integer, Integer> entry : usage.entrySet()) {
+                int itemId = entry.getKey();
+                int quantity = entry.getValue();
+                int price = costTracker.getGEPrice(itemId);
+                int itemCost = quantity * price;
+                totalCost += itemCost;
+                
+                try {
+                    String itemName = net.runelite.client.plugins.microbot.Microbot.getItemManager().getItemComposition(itemId).getName();
+                    Microbot.log("  " + itemName + ": " + quantity + "x @ " + price + " gp = " + itemCost + " gp");
+                } catch (Exception e) {
+                    Microbot.log("  Item ID " + itemId + ": " + quantity + "x @ " + price + " gp = " + itemCost + " gp");
+                }
+            }
+            Microbot.log("Total Cost: " + totalCost + " gp");
+        }
+        Microbot.log("==================================");
     }
 }

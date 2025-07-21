@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
+import net.runelite.api.Tile;
 import net.runelite.api.World;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import java.util.concurrent.TimeUnit;
@@ -742,17 +743,17 @@ public class ApexFighterPlugin extends Plugin {
             }
         }
     }
+    @SuppressWarnings("deprecation")
     private WorldPoint getSelectedWorldPoint() {
         if (Microbot.getClient().getWidget(WORLD_MAP_MAPVIEW_ID) == null) {
-            // Use mouse position instead of deprecated getSelectedSceneTile
-            Point mousePos = Microbot.getClient().getMouseCanvasPosition();
-            if (mousePos != null) {
-                // For now, return the current player location as fallback
-                // This maintains functionality while avoiding deprecated methods
-                return Rs2Player.getWorldLocation();
+            // Get the tile that was shift-clicked on (for ground tile selection)
+            final Tile selectedSceneTile = Microbot.getClient().getSelectedSceneTile();
+            if (selectedSceneTile != null) {
+                return WorldPoint.fromLocalInstance(Microbot.getClient(), selectedSceneTile.getLocalLocation());
             }
             return null;
         } else {
+            // World map is open, use mouse position for map calculation
             return calculateMapPoint(Microbot.getClient().isMenuOpen() ? lastMenuOpenedPoint : Microbot.getClient().getMouseCanvasPosition());
         }
     }
