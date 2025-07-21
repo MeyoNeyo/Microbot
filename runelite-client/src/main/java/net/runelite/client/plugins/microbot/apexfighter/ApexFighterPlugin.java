@@ -803,6 +803,7 @@ public class ApexFighterPlugin extends Plugin {
     private void onMenuOptionClicked(MenuEntry entry) {
         // Handle Set Center Tile click
         if (entry.getOption().equals(SET) && entry.getTarget().equals(CENTER_TILE) && config.toggleCenterTile()) {
+            // Use the tile that was shift-clicked, not the player's location
             WorldPoint selected = getSelectedWorldPoint();
             if (selected != null) {
                 setCenter(selected);
