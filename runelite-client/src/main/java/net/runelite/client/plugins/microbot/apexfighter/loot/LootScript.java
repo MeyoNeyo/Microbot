@@ -7,6 +7,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.apexfighter.ApexFighterConfig;
 import net.runelite.client.plugins.microbot.apexfighter.ApexFighterPlugin;
+import net.runelite.client.plugins.microbot.apexfighter.combat.SafeSpot;
 import net.runelite.client.plugins.microbot.apexfighter.enums.DefaultLooterStyle;
 import net.runelite.client.plugins.microbot.apexfighter.enums.State;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
@@ -22,6 +23,16 @@ public class LootScript extends Script {
 
     public LootScript() {
 
+    }
+
+    /**
+     * Helper method to handle post-loot logic including priority safespot movement
+     */
+    private void handlePostLootLogic() {
+        Microbot.pauseAllScripts.compareAndSet(true, false);
+        // Request priority safespot movement to quickly return to safespot after looting
+        Microbot.log("[LootScript] Items looted successfully - requesting priority safespot movement");
+        SafeSpot.requestPrioritySafespotMovement();
     }
 
 
@@ -53,8 +64,6 @@ public class LootScript extends Script {
                 if (config.looterStyle().equals(DefaultLooterStyle.GE_PRICE_RANGE) || config.looterStyle().equals(DefaultLooterStyle.MIXED)) {
                     lootItemsByValue(config);
                 }
-                lootBones(config);
-                lootAshes(config);
                 lootRunes(config);
                 lootCoins(config);
                 lootUntradeableItems(config);
@@ -80,43 +89,7 @@ public class LootScript extends Script {
                     "arrow", "bolt"
             );
             if (Rs2GroundItem.lootItemsBasedOnNames(arrowParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
-            }
-        }
-    }
-
-    private void lootBones(ApexFighterConfig config) {
-        // Bone looting is disabled when bury bones is enabled
-        // Bones are buried by BuryScatterScript instead
-        if (!config.toggleBuryBones()) {
-            LootingParameters bonesParams = new LootingParameters(
-                    config.attackRadius(),
-                    1,
-                    1,
-                    minFreeSlots,
-                    config.toggleDelayedLooting(),
-                    config.toggleOnlyLootMyItems(),
-                    "bone"
-            );
-            if (Rs2GroundItem.lootItemsBasedOnNames(bonesParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
-            }
-        }
-    }
-
-    private void lootAshes(ApexFighterConfig config) {
-        if (config.toggleScatter()) {
-            LootingParameters ashesParams = new LootingParameters(
-                    config.attackRadius(),
-                    1,
-                    1,
-                    minFreeSlots,
-                    config.toggleDelayedLooting(),
-                    config.toggleOnlyLootMyItems(),
-                    " ashes"
-            );
-            if (Rs2GroundItem.lootItemsBasedOnNames(ashesParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
+                handlePostLootLogic();
             }
         }
     }
@@ -134,7 +107,7 @@ public class LootScript extends Script {
                     " rune"
             );
             if (Rs2GroundItem.lootItemsBasedOnNames(runesParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
+                handlePostLootLogic();
             }
         }
     }
@@ -152,7 +125,7 @@ public class LootScript extends Script {
                     "coins"
             );
             if (Rs2GroundItem.lootCoins(coinsParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
+                handlePostLootLogic();
             }
         }
     }
@@ -170,7 +143,7 @@ public class LootScript extends Script {
                     "untradeable"
             );
             if (Rs2GroundItem.lootUntradables(untradeableItemsParams)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
+                handlePostLootLogic();
             }
         }
     }
@@ -186,7 +159,7 @@ public class LootScript extends Script {
                 config.toggleOnlyLootMyItems()
         );
         if (Rs2GroundItem.lootItemBasedOnValue(valueParams)) {
-            Microbot.pauseAllScripts.compareAndSet(true, false);
+            handlePostLootLogic();
         }
     }
 
@@ -201,7 +174,7 @@ public class LootScript extends Script {
                 config.listOfItemsToLoot().trim().split(",")
         );
         if (Rs2GroundItem.lootItemsBasedOnNames(valueParams)) {
-            Microbot.pauseAllScripts.compareAndSet(true, false);
+            handlePostLootLogic();
         }
     }
 

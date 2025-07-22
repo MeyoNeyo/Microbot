@@ -242,6 +242,12 @@ public class AttackNpcScript extends Script {
                     Microbot.log("[AttackNpc] Combat finished, resetting to IDLE state");
                     ApexFighterPlugin.setState(State.IDLE);
                 }
+                
+                // IMPORTANT: Check if player is walking to safespot - don't interrupt with combat
+                if (Rs2Player.isMoving() && !Rs2Combat.inCombat()) {
+                    // Allow safespot movement to complete without combat interference
+                    return;
+                }
 
                 if (!attackableNpcs.isEmpty()) {
                     Microbot.log("[AttackNpc] Found " + attackableNpcs.size() + " attackable NPCs, current state: " + ApexFighterPlugin.getState());

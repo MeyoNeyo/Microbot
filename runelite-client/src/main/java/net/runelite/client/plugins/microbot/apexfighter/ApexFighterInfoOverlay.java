@@ -60,7 +60,7 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .left("Total Loot Value:")
                     .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
                     .build());
-            panelComponent.getChildren().add(LineComponent.builder()
+            /*panelComponent.getChildren().add(LineComponent.builder()
                     .left("Total Cost:")
                     .right(ApexFighterPlugin.formatGp(totalCost) + " gp")
                     .build());
@@ -68,9 +68,10 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                     .left("Profit:")
                     .right(ApexFighterPlugin.formatGp(profit) + " gp")
                     .build());
-
+                     */
+                    
             // Show resource usage breakdown
-            panelComponent.getChildren().add(LineComponent.builder().left("Resource Usage:").build());
+           /*  panelComponent.getChildren().add(LineComponent.builder().left("Resource Usage:").build());
             for (Map.Entry<Integer, Integer> entry : net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().getResourceUsage().entrySet()) {
                 int itemId = entry.getKey();
                 int qty = entry.getValue();
@@ -82,8 +83,8 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                         .left(itemName.isEmpty() ? ("ID: " + itemId) : itemName)
                         .right("x" + qty)
                         .build());
-            }
-
+            }*/
+            
             // Show looted items as before
             if (!ApexFighterPlugin.sessionLoot.isEmpty()) {
                 panelComponent.getChildren().add(LineComponent.builder().left("Looted Items This Session:").build());

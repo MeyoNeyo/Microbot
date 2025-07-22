@@ -35,6 +35,8 @@ public boolean run(AIOFighterConfig config) {
 
 			if (!isPlayerAtSafeSpot(currentSafeSpot)) {
 				Rs2Walker.walkFastCanvas(currentSafeSpot);
+                sleep(50);
+                Rs2Walker.walkFastCanvas(currentSafeSpot);
 				Microbot.pauseAllScripts.compareAndSet(false, true);
 				sleepUntil(() -> isPlayerAtSafeSpot(currentSafeSpot));
 				Microbot.pauseAllScripts.compareAndSet(true, false);

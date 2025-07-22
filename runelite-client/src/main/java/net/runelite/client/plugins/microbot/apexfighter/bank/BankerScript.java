@@ -299,26 +299,32 @@ public class BankerScript extends Script {
             return true;
         }
 
-        // Withdraw default upkeep items
+        // Withdraw all non-food upkeep items first
         for (ItemToKeep item : ItemToKeep.values()) {
-            if (item.isEnabled(config)) {
+            if (!item.name().equals("FOOD") && item.isEnabled(config)) {
                 int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
                 if (count < item.getValue(config)) {
-                    if (item.name().equals("FOOD")) {
-                        for (Rs2Food food : Arrays.stream(Rs2Food.values()).sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed()).collect(Collectors.toList())) {
-                            if (Rs2Bank.hasBankItem(food.getId(), item.getValue(config) - count)) {
-                                Rs2Bank.withdrawX(true, food.getId(), item.getValue(config) - count);
-                                break;
-                            }
+                    ArrayList<Integer> ids = new ArrayList<>(item.getIds());
+                    Collections.reverse(ids);
+                    for (int id : ids) {
+                        if (Rs2Bank.hasBankItem(id, item.getValue(config) - count)) {
+                            Rs2Bank.withdrawX(true, id, item.getValue(config) - count);
+                            break;
                         }
-                    } else {
-                        ArrayList<Integer> ids = new ArrayList<>(item.getIds());
-                        Collections.reverse(ids);
-                        for (int id : ids) {
-                            if (Rs2Bank.hasBankItem(id, item.getValue(config) - count)) {
-                                Rs2Bank.withdrawX(true, id, item.getValue(config) - count);
-                                break;
-                            }
+                    }
+                }
+            }
+        }
+
+        // Withdraw food upkeep item last
+        for (ItemToKeep item : ItemToKeep.values()) {
+            if (item.name().equals("FOOD") && item.isEnabled(config)) {
+                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+                if (count < item.getValue(config)) {
+                    for (Rs2Food food : Arrays.stream(Rs2Food.values()).sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed()).collect(Collectors.toList())) {
+                        if (Rs2Bank.hasBankItem(food.getId(), item.getValue(config) - count)) {
+                            Rs2Bank.withdrawX(true, food.getId(), item.getValue(config) - count);
+                            break;
                         }
                     }
                 }
