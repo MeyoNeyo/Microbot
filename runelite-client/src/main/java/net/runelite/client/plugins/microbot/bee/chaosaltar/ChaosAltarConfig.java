@@ -50,4 +50,58 @@ public interface ChaosAltarConfig extends Config {
         return false;
     }
 
+    @ConfigItem(
+            keyName = "enableWorldHopping",
+            name = "Enable World Hopping",
+            description = "Automatically hop worlds when other players are detected"
+    )
+    default boolean enableWorldHopping() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "playerDetectionRadius",
+            name = "Player Detection Radius",
+            description = "Radius in tiles to detect other players (recommended: 15-25 for chaos altar)"
+    )
+    default int playerDetectionRadius() {
+        return 20;
+    }
+
+    @ConfigItem(
+            keyName = "maxPlayersBeforeHop",
+            name = "Max Players Before Hop",
+            description = "Maximum number of players allowed before hopping (0 = hop on any player)"
+    )
+    default int maxPlayersBeforeHop() {
+        return 0;
+    }
+
+    @ConfigItem(
+            keyName = "instantHop",
+            name = "Instant Hop on Player Detection",
+            description = "Hop immediately when any attackable player is detected (recommended for wilderness)"
+    )
+    default boolean instantHop() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "hopCooldownSeconds",
+            name = "Hop Cooldown (seconds)",
+            description = "Minimum time between world hops to avoid spam hopping"
+    )
+    default int hopCooldownSeconds() {
+        return 10;
+    }
+
+    @ConfigItem(
+            keyName = "emergencyHopOnAttack",
+            name = "Emergency Hop on Attack",
+            description = "Immediately hop when being attacked by another player (bypasses cooldown)"
+    )
+    default boolean emergencyHopOnAttack() {
+        return true;
+    }
+
 }
