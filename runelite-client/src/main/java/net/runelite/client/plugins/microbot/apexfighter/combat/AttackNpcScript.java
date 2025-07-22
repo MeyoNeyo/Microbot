@@ -243,9 +243,10 @@ public class AttackNpcScript extends Script {
                     ApexFighterPlugin.setState(State.IDLE);
                 }
                 
-                // IMPORTANT: Check if player is walking to safespot - don't interrupt with combat
-                if (Rs2Player.isMoving() && !Rs2Combat.inCombat()) {
-                    // Allow safespot movement to complete without combat interference
+                // IMPORTANT: Check if player is walking to safespot and if is distance to safespot is greater than 1 tile then return
+                // Check if player is moving and not yet on the safespot tile, then skip attacking
+                if (Rs2Player.isMoving() && !Rs2Player.getWorldLocation().equals(config.manualSafeSpotCoords())) {
+                    Microbot.log("[AttackNpc] Player is walking to safespot, skipping attack");
                     return;
                 }
 

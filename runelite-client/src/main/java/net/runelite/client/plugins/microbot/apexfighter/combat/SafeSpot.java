@@ -55,12 +55,13 @@ public boolean run(ApexFighterConfig config) {
                 LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), currentSafeSpot);
                 if (localPoint != null && Rs2Camera.isTileOnScreen(localPoint)) {
                     // Tile is on screen, click it directly
-                    Rs2Walker.walkCanvas(currentSafeSpot);
+                    Rs2Walker.walkFastCanvas(currentSafeSpot);
+                Microbot.pauseAllScripts.compareAndSet(false, true);
                 } else {
                     // Tile is not on screen, use pathfinding
                     Rs2Walker.walkTo(currentSafeSpot);
-                }
                 Microbot.pauseAllScripts.compareAndSet(false, true);
+                }
                 sleepUntil(() -> isPlayerAtSafeSpot(currentSafeSpot));
                 Microbot.pauseAllScripts.compareAndSet(true, false);
             } else if (priorityMovementRequested) {
