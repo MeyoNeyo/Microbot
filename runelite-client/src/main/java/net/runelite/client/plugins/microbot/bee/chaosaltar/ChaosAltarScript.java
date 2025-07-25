@@ -10,6 +10,7 @@ import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
+import net.runelite.client.plugins.microbot.util.equipment.JewelleryLocationEnum;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -24,7 +25,6 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
-import static net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkFastCanvas;
 import static net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkTo;
 
 @Slf4j
@@ -142,7 +142,7 @@ public class ChaosAltarScript extends Script {
         int distanceToAltar = gameObject.getWorldLocation().distanceTo(playerLocation);
         
         // More strict check: must be reachable AND within 1 tile for accurate altar access
-        if (reachable && distanceToAltar <= 1) {
+        if (reachable && distanceToAltar <= 3) {
             reachable = true;
         } else {
             reachable = false;
@@ -216,10 +216,52 @@ public class ChaosAltarScript extends Script {
         }
 
         if (hasBurningAmulet()) {
-            // Walk to the altar area
-            walkFastCanvas(CHAOS_ALTAR_POINT_SOUTH);
-            //walkTo(CHAOS_ALTAR_POINT_SOUTH);
-            sleepUntil(() -> Rs2Pvp.isInWilderness(), 5000);
+            // Use burning amulet to teleport to Lava Maze before walking to altar
+            Microbot.log("Using Burning Amulet to teleport to Lava Maze before going to Chaos Altar");
+            Rs2Equipment.interact("Burning amulet", "Lava Maze");
+            
+            // Wait for teleport to complete - check if we're in wilderness and near Lava Maze
+            sleepUntil(() -> {
+                return Rs2Pvp.isInWilderness() && 
+                       Rs2Player.getWorldLocation().distanceTo(JewelleryLocationEnum.LAVA_MAZE.getLocation()) <= 10;
+            }, 8000);
+            
+            // If teleport was successful, walk directly to the chaos altar from Lava Maze
+            if (Rs2Pvp.isInWilderness()) {
+                Microbot.log("Successfully teleported to Lava Maze, now walking directly to Chaos Altar");
+                
+                // Enable world hopping now that we're in wilderness
+                if (config != null && config.enableWorldHopping()) {
+                    ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                    Microbot.log("Entered wilderness - world hopping enabled");
+                }
+                
+                // Walk directly to the chaos altar from Lava Maze using Rs2Walker to handle doors/obstacles
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
+            } else {
+                Microbot.log("Teleport failed, falling back to manual walk to altar");
+                // Fallback to walking if teleport failed - walk directly to altar
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
+                
+                // Enable world hopping when we finally enter wilderness
+                if (Rs2Pvp.isInWilderness() && config != null && config.enableWorldHopping()) {
+                    ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                    Microbot.log("Entered wilderness - world hopping enabled");
+                }
+            }
+        } else {
+            Microbot.log("No burning amulet found, walking manually to Chaos Altar");
+            // Fallback if no burning amulet - walk directly to altar
+            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+            sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
+            
+            // Enable world hopping when we enter wilderness
+            if (Rs2Pvp.isInWilderness() && config != null && config.enableWorldHopping()) {
+                ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                Microbot.log("Entered wilderness - world hopping enabled");
+            }
         }
     }
 
