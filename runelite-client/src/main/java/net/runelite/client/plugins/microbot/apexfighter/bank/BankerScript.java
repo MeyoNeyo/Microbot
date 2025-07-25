@@ -184,63 +184,36 @@ public class BankerScript extends Script {
     }
 
     public boolean needsBanking() {
-        // 1. Food priority: if food is missing, bank immediately
-        boolean foodDepleted = false;
-        for (ItemToKeep item : ItemToKeep.values()) {
-            if (item.name().equals("FOOD") && item.isEnabled(config)) {
-                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
-                if (count == 0) {
-                    foodDepleted = true;
-                    log.info("[needsBanking] Food depleted");
-                    break;
-                }
-            }
-        }
-        if (foodDepleted) return true;
-
-        // 2. Then check other upkeep/custom items as before
-        boolean defaultDepleted = isUpkeepItemDepleted(config);
-        boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
-        if (defaultDepleted) {
-            log.info("[needsBanking] Default upkeep item depleted");
-        }
-        if (slotDepleted) {
-            log.info("[needsBanking] Not enough empty slots (empty: {}, minFree: {})", Rs2Inventory.emptySlotCount(), config.minFreeSlots());
-        }
-        boolean customDepleted = false;
-        if ((defaultDepleted || slotDepleted) && config.bank()) {
-            Map<String, Integer> keepItems = parseBankingInventoryKeep(config.bankingInventoryKeep());
-            for (Map.Entry<String, Integer> entry : keepItems.entrySet()) {
-                String itemName = entry.getKey();
-                Integer requiredAmount = entry.getValue();
-                int currentAmount = Rs2Inventory.all().stream()
-                    .filter(i -> i.getName().equalsIgnoreCase(itemName))
-                    .mapToInt(Rs2ItemModel::getQuantity)
-                    .sum();
-                if (requiredAmount != null) {
-                    if (currentAmount < requiredAmount) {
-                        log.info("[needsBanking] Custom item depleted: {} (have: {}, need: {})", itemName, currentAmount, requiredAmount);
-                        customDepleted = true;
-                    }
-                } else {
-                    if (currentAmount < 1) {
-                        log.info("[needsBanking] Custom item depleted: {} (have: {}, need: 1)", itemName, currentAmount);
-                        customDepleted = true;
-                    }
-                }
-            }
-        }
-        return ((defaultDepleted || customDepleted) && config.bank()) || (slotDepleted && config.bank());
+        // Use the static method to ensure consistent logic
+        return isBankingNeeded(config);
     }
 
     /**
      * Static method to check if banking is needed without requiring a BankerScript instance.
      * This should be used by other scripts to check banking priority.
+     * PRIORITY LOGIC:
+     * 1. FOOD FIRST - Only bank if food is completely depleted (count = 0)
+     * 2. Keep fighting as long as there's ANY food available
+     * 3. Only check other items when food is depleted
      */
     public static boolean isBankingNeeded(ApexFighterConfig config) {
         if (!config.bank()) return false;
         
-        // 1. Check inventory slots first (critical condition)
+        // 1. Check if food is completely depleted - HIGHEST PRIORITY
+        if (config.useFood()) {
+            int foodCount = Rs2Food.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+            if (foodCount == 0) {
+                log.info("[isBankingNeeded] CRITICAL - Food completely depleted (count: 0) - banking needed immediately");
+                return true;
+            } else {
+                log.debug("[isBankingNeeded] Food available (count: {}) - continue fighting, no banking needed", foodCount);
+                // As long as there's food, DON'T bank - keep fighting!
+                // This means we ignore other item requirements if we have food
+                return false;
+            }
+        }
+        
+        // 2. Only if food is disabled, check inventory slots
         boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
         if (slotDepleted) {
             log.info("[isBankingNeeded] Not enough free slots (current: {}, required: {}) - banking needed", 
@@ -248,16 +221,15 @@ public class BankerScript extends Script {
             return true;
         }
         
-        // 2. Check if ANY critical upkeep items are completely depleted
+        // 3. Only if food is disabled, check other critical upkeep items
         boolean hasCriticalDepletion = false;
         for (ItemToKeep item : ItemToKeep.values()) {
-            if (item == ItemToKeep.TELEPORT || !item.isEnabled(config)) continue;
+            if (item == ItemToKeep.TELEPORT || item == ItemToKeep.FOOD || !item.isEnabled(config)) continue;
             
             int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
-            int required = item.getValue(config);
             
-            log.debug("[isBankingNeeded] {} check - enabled: {}, count: {}, required: {}", 
-                item.name(), item.isEnabled(config), count, required);
+            log.debug("[isBankingNeeded] {} check - enabled: {}, count: {}", 
+                item.name(), item.isEnabled(config), count);
                 
             // Critical depletion: item is completely out (count = 0)
             if (count == 0) {
@@ -271,7 +243,7 @@ public class BankerScript extends Script {
             return true;
         }
         
-        // 3. Check custom banking items
+        // 4. Only if food is disabled, check custom banking items for critical depletion (count = 0)
         Map<String, Integer> keepItems = BankerScript.parseBankingInventoryKeep(config.bankingInventoryKeep());
         for (Map.Entry<String, Integer> entry : keepItems.entrySet()) {
             String itemName = entry.getKey();
@@ -280,32 +252,19 @@ public class BankerScript extends Script {
                 .filter(i -> i.getName().equalsIgnoreCase(itemName))
                 .mapToInt(Rs2ItemModel::getQuantity)
                 .sum();
-            if (requiredAmount != null) {
-                if (requiredAmount == Integer.MAX_VALUE) {
-                    // 'all' means at least 1
-                    if (currentAmount < 1) {
-                        log.info("[isBankingNeeded] Custom item '{}' missing - banking needed", itemName);
-                        return true;
-                    }
-                } else {
-                    // For a number, only require banking if you have less than that number
-                    if (currentAmount < requiredAmount) {
-                        log.info("[isBankingNeeded] Custom item '{}' insufficient (current: {}, required: {}) - banking needed", 
-                            itemName, currentAmount, requiredAmount);
-                        return true;
-                    }
-                }
+            
+            // ONLY bank for custom items if they are COMPLETELY DEPLETED (count = 0)
+            if (currentAmount == 0) {
+                log.info("[isBankingNeeded] Custom item '{}' completely depleted (count: 0) - banking needed", itemName);
+                return true;
             } else {
-                if (currentAmount < 1) {
-                    log.info("[isBankingNeeded] Custom item '{}' missing - banking needed", itemName);
-                    return true;
-                }
+                log.debug("[isBankingNeeded] Custom item '{}' available (current: {}, target: {}) - no banking needed", 
+                    itemName, currentAmount, requiredAmount);
             }
         }
         
         // Debug log when banking is NOT needed
-        log.debug("[isBankingNeeded] Banking not needed - slots available: {}, all upkeep items present", 
-            Rs2Inventory.emptySlotCount());
+        log.debug("[isBankingNeeded] Banking not needed - food available or all critical items present");
         return false;
     }
 
