@@ -467,6 +467,12 @@ public class ChaosAltarScript extends Script {
             return State.WALK_TO_ALTAR;
         }
         if (inWilderness && !hasAnyBones) {
+            // Turn off world hopping when we have no bones in wilderness to allow other players to attack us for faster death
+            if (config != null && config.enableWorldHopping()) {
+                ChaosAltarWorldHopManager.setHoppingEnabled(false);
+                Microbot.log("No bones in wilderness - turning off world hopping to allow PK attacks for faster death");
+            }
+            
             // Check if we're stuck after world hop - if player is not moving and far from Chaos Fanatic
             WorldPoint chaosFantasticLocation = new WorldPoint(2979, 3845, 0);
             WorldPoint currentLocation = Rs2Player.getWorldLocation();
