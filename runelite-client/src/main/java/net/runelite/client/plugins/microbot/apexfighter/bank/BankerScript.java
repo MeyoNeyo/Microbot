@@ -240,21 +240,34 @@ public class BankerScript extends Script {
     public static boolean isBankingNeeded(ApexFighterConfig config) {
         if (!config.bank()) return false;
         
-        // 1. Food priority check
+        // 1. Check inventory slots first (critical condition)
+        boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
+        if (slotDepleted) {
+            log.info("[isBankingNeeded] Not enough free slots (current: {}, required: {}) - banking needed", 
+                Rs2Inventory.emptySlotCount(), config.minFreeSlots());
+            return true;
+        }
+        
+        // 2. Check if ANY critical upkeep items are completely depleted
+        boolean hasCriticalDepletion = false;
         for (ItemToKeep item : ItemToKeep.values()) {
-            if (item.name().equals("FOOD") && item.isEnabled(config)) {
-                int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
-                if (count == 0) {
-                    return true; // Food depleted - banking needed immediately
-                }
+            if (item == ItemToKeep.TELEPORT || !item.isEnabled(config)) continue;
+            
+            int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+            int required = item.getValue(config);
+            
+            log.debug("[isBankingNeeded] {} check - enabled: {}, count: {}, required: {}", 
+                item.name(), item.isEnabled(config), count, required);
+                
+            // Critical depletion: item is completely out (count = 0)
+            if (count == 0) {
+                log.info("[isBankingNeeded] Critical item '{}' depleted (count: 0) - banking needed", item.name());
+                hasCriticalDepletion = true;
+                break;
             }
         }
-
-        // 2. Check other critical items
-        boolean defaultDepleted = isUpkeepItemDepletedStatic(config);
-        boolean slotDepleted = Rs2Inventory.emptySlotCount() <= config.minFreeSlots();
         
-        if (defaultDepleted || slotDepleted) {
+        if (hasCriticalDepletion) {
             return true;
         }
         
@@ -271,21 +284,28 @@ public class BankerScript extends Script {
                 if (requiredAmount == Integer.MAX_VALUE) {
                     // 'all' means at least 1
                     if (currentAmount < 1) {
+                        log.info("[isBankingNeeded] Custom item '{}' missing - banking needed", itemName);
                         return true;
                     }
                 } else {
                     // For a number, only require banking if you have less than that number
                     if (currentAmount < requiredAmount) {
+                        log.info("[isBankingNeeded] Custom item '{}' insufficient (current: {}, required: {}) - banking needed", 
+                            itemName, currentAmount, requiredAmount);
                         return true;
                     }
                 }
             } else {
                 if (currentAmount < 1) {
+                    log.info("[isBankingNeeded] Custom item '{}' missing - banking needed", itemName);
                     return true;
                 }
             }
         }
         
+        // Debug log when banking is NOT needed
+        log.debug("[isBankingNeeded] Banking not needed - slots available: {}, all upkeep items present", 
+            Rs2Inventory.emptySlotCount());
         return false;
     }
 
@@ -303,14 +323,34 @@ public class BankerScript extends Script {
         for (ItemToKeep item : ItemToKeep.values()) {
             if (!item.name().equals("FOOD") && item.isEnabled(config)) {
                 int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
-                if (count < item.getValue(config)) {
+                int required = item.getValue(config);
+                int needed = required - count;
+                
+                if (needed > 0) {
+                    log.info("[withdrawUpkeepItems] Need {} more {} items (current: {}, required: {})", 
+                        needed, item.name(), count, required);
+                    
                     ArrayList<Integer> ids = new ArrayList<>(item.getIds());
                     Collections.reverse(ids);
+                    boolean withdrawn = false;
+                    
                     for (int id : ids) {
-                        if (Rs2Bank.hasBankItem(id, item.getValue(config) - count)) {
-                            Rs2Bank.withdrawX(true, id, item.getValue(config) - count);
-                            break;
+                        if (Rs2Bank.hasBankItem(id, needed)) {
+                            log.info("[withdrawUpkeepItems] Withdrawing {} x{} (ID: {})", item.name(), needed, id);
+                            Rs2Bank.withdrawX(true, id, needed);
+                            
+                            // Wait and verify withdrawal
+                            if (waitForWithdrawal(id, count, required, 3000)) {
+                                withdrawn = true;
+                                break;
+                            } else {
+                                log.warn("[withdrawUpkeepItems] Failed to withdraw correct amount of {} (ID: {})", item.name(), id);
+                            }
                         }
+                    }
+                    
+                    if (!withdrawn) {
+                        log.warn("[withdrawUpkeepItems] Could not withdraw required {} items from bank", item.name());
                     }
                 }
             }
@@ -320,33 +360,203 @@ public class BankerScript extends Script {
         for (ItemToKeep item : ItemToKeep.values()) {
             if (item.name().equals("FOOD") && item.isEnabled(config)) {
                 int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
-                if (count < item.getValue(config)) {
-                    for (Rs2Food food : Arrays.stream(Rs2Food.values()).sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed()).collect(Collectors.toList())) {
-                        if (Rs2Bank.hasBankItem(food.getId(), item.getValue(config) - count)) {
-                            Rs2Bank.withdrawX(true, food.getId(), item.getValue(config) - count);
-                            break;
+                int required = item.getValue(config);
+                int needed = required - count;
+                
+                if (needed > 0) {
+                    log.info("[withdrawUpkeepItems] Need {} more food items (current: {}, required: {})", 
+                        needed, count, required);
+                    
+                    boolean withdrawn = false;
+                    // Try to withdraw food in order of healing value (highest first)
+                    for (Rs2Food food : Arrays.stream(Rs2Food.values())
+                            .sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed())
+                            .collect(Collectors.toList())) {
+                        
+                        if (Rs2Bank.hasBankItem(food.getId(), needed)) {
+                            log.info("[withdrawUpkeepItems] Withdrawing {} x{} (ID: {})", food.getName(), needed, food.getId());
+                            Rs2Bank.withdrawX(true, food.getId(), needed);
+                            
+                            // Wait and verify withdrawal
+                            if (waitForWithdrawal(food.getId(), count, required, 3000)) {
+                                withdrawn = true;
+                                break;
+                            } else {
+                                log.warn("[withdrawUpkeepItems] Failed to withdraw correct amount of {} (ID: {})", food.getName(), food.getId());
+                            }
                         }
+                    }
+                    
+                    if (!withdrawn) {
+                        log.warn("[withdrawUpkeepItems] Could not withdraw required food items from bank");
                     }
                 }
             }
         }
+        
         // Withdraw custom keep items
         Map<String, Integer> keepItems = parseBankingInventoryKeep(config.bankingInventoryKeep());
         for (Map.Entry<String, Integer> entry : keepItems.entrySet()) {
             String itemName = entry.getKey();
             Integer requiredAmount = entry.getValue();
             int currentAmount = Rs2Inventory.count(itemName);
+            
             if (requiredAmount != null && requiredAmount == Integer.MAX_VALUE) {
                 // Withdraw all of this item if not already in inventory
                 int inBank = Rs2Bank.count(itemName);
                 if (inBank > 0 && currentAmount < inBank) {
+                    log.info("[withdrawUpkeepItems] Withdrawing all {} from bank", itemName);
                     Rs2Bank.withdrawAll(true, itemName);
+                    
+                    // Wait for withdrawal to complete
+                    waitForCustomItemWithdrawal(itemName, currentAmount, 3000);
                 }
             } else if (requiredAmount != null && currentAmount < requiredAmount) {
-                Rs2Bank.withdrawX(true, itemName, requiredAmount - currentAmount);
+                int needed = requiredAmount - currentAmount;
+                log.info("[withdrawUpkeepItems] Withdrawing {} x{} (current: {}, required: {})", 
+                    itemName, needed, currentAmount, requiredAmount);
+                Rs2Bank.withdrawX(true, itemName, needed);
+                
+                // Wait and verify withdrawal with correction support
+                waitForCustomItemWithdrawalWithTarget(itemName, currentAmount, requiredAmount, 3000);
             }
         }
         return !isUpkeepItemDepleted(config);
+    }
+    
+    /**
+     * Waits for a specific item withdrawal to complete and verifies the correct amount was withdrawn.
+     * If the withdrawal is incorrect, it will attempt to correct it.
+     * @param itemId The ID of the item being withdrawn
+     * @param initialCount The count before withdrawal
+     * @param targetCount The desired total count after withdrawal
+     * @param timeoutMs Maximum time to wait in milliseconds
+     * @return true if the correct amount was withdrawn, false otherwise
+     */
+    private boolean waitForWithdrawal(int itemId, int initialCount, int targetCount, long timeoutMs) {
+        log.debug("[waitForWithdrawal] Starting withdrawal verification for item ID {} (initial: {}, target: {})", 
+            itemId, initialCount, targetCount);
+        
+        // Wait for the withdrawal to complete
+        boolean withdrawalSuccessful = sleepUntil(() -> {
+            int currentCount = Rs2Inventory.count(itemId);
+            return currentCount >= targetCount;
+        }, (int) timeoutMs);
+        
+        int finalCount = Rs2Inventory.count(itemId);
+        
+        if (withdrawalSuccessful && finalCount >= targetCount) {
+            log.debug("[waitForWithdrawal] Successfully withdrew item ID {} (final count: {})", itemId, finalCount);
+            return true;
+        }
+        
+        // If withdrawal was incomplete, try to correct it
+        if (finalCount > initialCount && finalCount < targetCount) {
+            int stillNeeded = targetCount - finalCount;
+            log.info("[waitForWithdrawal] Partial withdrawal detected for item ID {} (got: {}, need: {} more)", 
+                itemId, finalCount, stillNeeded);
+                
+            if (Rs2Bank.isOpen() && Rs2Bank.hasBankItem(itemId, stillNeeded)) {
+                log.info("[waitForWithdrawal] Attempting to withdraw remaining {} of item ID {}", stillNeeded, itemId);
+                Rs2Bank.withdrawX(true, itemId, stillNeeded);
+                
+                // Wait for the correction
+                boolean correctionSuccessful = sleepUntil(() -> {
+                    int currentCount = Rs2Inventory.count(itemId);
+                    return currentCount >= targetCount;
+                }, 2000);
+                
+                finalCount = Rs2Inventory.count(itemId);
+                if (correctionSuccessful && finalCount >= targetCount) {
+                    log.info("[waitForWithdrawal] Successfully corrected withdrawal for item ID {} (final count: {})", 
+                        itemId, finalCount);
+                    return true;
+                }
+            }
+        }
+        
+        log.warn("[waitForWithdrawal] Failed to withdraw correct amount of item ID {} (initial: {}, target: {}, final: {})", 
+            itemId, initialCount, targetCount, finalCount);
+        return false;
+    }
+    
+    /**
+     * Waits for a custom item withdrawal to complete and attempts correction if needed.
+     * @param itemName The name of the item being withdrawn
+     * @param initialCount The count before withdrawal
+     * @param timeoutMs Maximum time to wait in milliseconds
+     */
+    private void waitForCustomItemWithdrawal(String itemName, int initialCount, long timeoutMs) {
+        log.debug("[waitForCustomItemWithdrawal] Starting withdrawal verification for '{}' (initial: {})", 
+            itemName, initialCount);
+        
+        // Wait for any change in inventory count
+        boolean withdrawalDetected = sleepUntil(() -> {
+            int currentCount = Rs2Inventory.count(itemName);
+            return currentCount > initialCount;
+        }, (int) timeoutMs);
+        
+        int finalCount = Rs2Inventory.count(itemName);
+        
+        if (withdrawalDetected && finalCount > initialCount) {
+            log.debug("[waitForCustomItemWithdrawal] Successfully withdrew '{}' (final count: {})", itemName, finalCount);
+        } else {
+            log.warn("[waitForCustomItemWithdrawal] No change detected for '{}' (initial: {}, final: {})", 
+                itemName, initialCount, finalCount);
+        }
+    }
+    
+    /**
+     * Waits for a custom item withdrawal to complete with a specific target and attempts correction if needed.
+     * @param itemName The name of the item being withdrawn
+     * @param initialCount The count before withdrawal  
+     * @param targetCount The desired total count after withdrawal
+     * @param timeoutMs Maximum time to wait in milliseconds
+     */
+    private void waitForCustomItemWithdrawalWithTarget(String itemName, int initialCount, int targetCount, long timeoutMs) {
+        log.debug("[waitForCustomItemWithdrawalWithTarget] Starting withdrawal verification for '{}' (initial: {}, target: {})", 
+            itemName, initialCount, targetCount);
+        
+        // Wait for the withdrawal to complete
+        boolean withdrawalSuccessful = sleepUntil(() -> {
+            int currentCount = Rs2Inventory.count(itemName);
+            return currentCount >= targetCount;
+        }, (int) timeoutMs);
+        
+        int finalCount = Rs2Inventory.count(itemName);
+        
+        if (withdrawalSuccessful && finalCount >= targetCount) {
+            log.debug("[waitForCustomItemWithdrawalWithTarget] Successfully withdrew '{}' (final count: {})", itemName, finalCount);
+            return;
+        }
+        
+        // If withdrawal was incomplete, try to correct it
+        if (finalCount > initialCount && finalCount < targetCount) {
+            int stillNeeded = targetCount - finalCount;
+            log.info("[waitForCustomItemWithdrawalWithTarget] Partial withdrawal detected for '{}' (got: {}, need: {} more)", 
+                itemName, finalCount, stillNeeded);
+                
+            if (Rs2Bank.isOpen() && Rs2Bank.hasBankItem(itemName, stillNeeded)) {
+                log.info("[waitForCustomItemWithdrawalWithTarget] Attempting to withdraw remaining {} of '{}'", stillNeeded, itemName);
+                Rs2Bank.withdrawX(true, itemName, stillNeeded);
+                
+                // Wait for the correction
+                boolean correctionSuccessful = sleepUntil(() -> {
+                    int currentCount = Rs2Inventory.count(itemName);
+                    return currentCount >= targetCount;
+                }, 2000);
+                
+                finalCount = Rs2Inventory.count(itemName);
+                if (correctionSuccessful && finalCount >= targetCount) {
+                    log.info("[waitForCustomItemWithdrawalWithTarget] Successfully corrected withdrawal for '{}' (final count: {})", 
+                        itemName, finalCount);
+                    return;
+                }
+            }
+        }
+        
+        log.warn("[waitForCustomItemWithdrawalWithTarget] Failed to withdraw correct amount of '{}' (initial: {}, target: {}, final: {})", 
+            itemName, initialCount, targetCount, finalCount);
     }
 
     public boolean depositAllExcept(ApexFighterConfig config) {
@@ -398,6 +608,21 @@ public class BankerScript extends Script {
         return Arrays.stream(ItemToKeep.values())
                 .filter(item -> item != ItemToKeep.TELEPORT && item.isEnabled(config))
                 .anyMatch(item -> item.getIds().stream().mapToInt(Rs2Inventory::count).sum() == 0);
+    }
+
+    /**
+     * Get a debugging string showing upkeep item status for overlay display
+     */
+    public static String getUpkeepItemsDebugInfo(ApexFighterConfig config) {
+        StringBuilder sb = new StringBuilder();
+        for (ItemToKeep item : ItemToKeep.values()) {
+            if (item == ItemToKeep.TELEPORT || !item.isEnabled(config)) continue;
+            
+            int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+            int required = item.getValue(config);
+            sb.append(item.name()).append(": ").append(count).append("/").append(required).append(" ");
+        }
+        return sb.toString().trim();
     }
 
     public boolean goToBank() {

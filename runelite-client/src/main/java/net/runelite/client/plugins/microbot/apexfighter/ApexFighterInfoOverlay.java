@@ -9,9 +9,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 import javax.inject.Inject;
 import java.awt.*;
 
-import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
-import java.util.Map;
 
 public class ApexFighterInfoOverlay extends OverlayPanel {
     private final ApexFighterConfig config;
@@ -54,8 +52,8 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
 
             // --- Loot/Cost/Profit Tracking Overlay ---
             long totalValue = ApexFighterPlugin.getTotalLootValue();
-            int totalCost = net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().getTotalCost();
-            long profit = totalValue - totalCost;
+             int totalCost = net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance().getTotalCost();
+             long profit = totalValue - totalCost; // Currently unused
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Total Loot Value:")
                     .right(ApexFighterPlugin.formatGp(totalValue) + " gp")
@@ -95,6 +93,80 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                             .build());
                 }
             }
+
+            /*// Debug Banking Status
+            panelComponent.getChildren().add(LineComponent.builder().build());
+            panelComponent.getChildren().add(LineComponent.builder().left("=== BANKING DEBUG ===").build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Banking Enabled:")
+                    .right(String.valueOf(config.bank()))
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Use Food:")
+                    .right(String.valueOf(config.useFood()))
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Food Value:")
+                    .right(String.valueOf(config.foodValue()))
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Min Free Slots:")
+                    .right(String.valueOf(config.minFreeSlots()))
+                    .build());
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Current Empty Slots:")
+                    .right(String.valueOf(Rs2Inventory.emptySlotCount()))
+                    .build());
+            
+            // Count food items using Rs2Food
+            int foodCount = net.runelite.client.plugins.microbot.util.misc.Rs2Food.getIds().stream()
+                .mapToInt(Rs2Inventory::count).sum();
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Food Count (Rs2Food):")
+                    .right(String.valueOf(foodCount))
+                    .build());
+            
+            // Count food items using inventory food method
+            int inventoryFoodCount = Rs2Inventory.getInventoryFood().size();
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Food Count (Inventory):")
+                    .right(String.valueOf(inventoryFoodCount))
+                    .build());
+            
+            // Show actual banking needed result
+            boolean isBankingRequired = net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config);
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Banking Needed:")
+                    .right(String.valueOf(isBankingRequired))
+                    .build());
+            
+            // Show upkeep items status
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Upkeep items:")
+                    .right(net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.getUpkeepItemsDebugInfo(config))
+                    .build());
+            
+            // Show specific shark count
+            int sharkCount = Rs2Inventory.count(385); // Shark ID
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Shark Count (ID 385):")
+                    .right(String.valueOf(sharkCount))
+                    .build());
+            
+            // Show if shark is in Rs2Food IDs
+            boolean sharkInRs2Food = net.runelite.client.plugins.microbot.util.misc.Rs2Food.getIds().contains(385);
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Shark in Rs2Food IDs:")
+                    .right(String.valueOf(sharkInRs2Food))
+                    .build());
+            
+            // Show banking needed status
+            boolean bankingNeeded = net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.isBankingNeeded(config);
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Banking Needed:")
+                    .right(String.valueOf(bankingNeeded))
+                    .build());
+                    */
         } catch (Exception ex) {
             Microbot.logStackTrace(this.getClass().getSimpleName(), ex);
         }
