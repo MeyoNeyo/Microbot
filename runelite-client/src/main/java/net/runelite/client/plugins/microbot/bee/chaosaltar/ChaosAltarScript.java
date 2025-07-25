@@ -282,12 +282,12 @@ public class ChaosAltarScript extends Script {
                 }
                 
                 // Walk directly to the chaos altar from Lava Maze using Rs2Walker to handle doors/obstacles
-                Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
                 sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
             } else {
                 Microbot.log("Teleport failed, falling back to manual walk to altar");
                 // Fallback to walking if teleport failed - walk directly to altar
-                Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
                 sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
                 
                 // Enable world hopping when we finally enter wilderness
@@ -299,7 +299,7 @@ public class ChaosAltarScript extends Script {
         } else {
             Microbot.log("No burning amulet found, walking manually to Chaos Altar");
             // Fallback if no burning amulet - walk directly to altar
-            Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
+            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
             sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
             
             // Enable world hopping when we enter wilderness
@@ -344,7 +344,7 @@ public class ChaosAltarScript extends Script {
         if (!CHAOS_ALTAR_AREA.contains(Rs2Player.getWorldLocation())) {
             //if radius of the object chaos altar is greater than 5 tiles from the player
             if (CHAOS_ALTAR_POINT.distanceTo(Rs2Player.getWorldLocation()) > 5) {
-                walkFastCanvas(CHAOS_ALTAR_POINT);
+                walkTo(CHAOS_ALTAR_POINT);
             }
         }
 
