@@ -23,7 +23,7 @@
 2339 3649 0		13143;13144				Y	F	19	4	Western banner
 # Explorer's Ring (2 has 3 teleports per day, 3 and 4 are unlimited)										
 3052 3291 0		13126		4552<3		Y	T	19	4	Explorer's ring: Teleport
-3052 3291 0		13127;13128				Y	F	19	4	Explorer's ring
+3052 3291 0		13127;13128				Y	F	19	4	Explorer's ring: Teleport
 # Rada's Blessing (Kourend Woodland, 1 has 3 teleports, 2 has 5 teleports, 3 and 4 have unlimited. For Mount Karuulum, 3 has 3 teleports and 4 has unlimited)										
 1554 3457 0		22941		7937<3		Y	T	19	4	Rada's blessing: Kourend Woodland
 1554 3457 0		22943		7937<5		Y	T	19	4	Rada's blessing: Kourend Woodland
@@ -118,10 +118,10 @@
 3221 3218 0		8008				Y	T	19	4	Lumbridge tablet
 2757 3478 0		8010				Y	T	19	4	Camelot tablet
 2661 3302 0		8011	Plague City		165=30	Y	T	19	4	Ardougne tablet
-2549 3112 0		8012	Watchtower			Y	T	19	4	Watchtower tablet
+2549 3112 0		8012	Watchtower		212=14	Y	T	19	4	Watchtower tablet
 										
 # Varbit 4460 is DIARY_ARDOUGNE_HARD										
-2584 3097 0		8012	Watchtower	4460=1		Y	T	19	4	Watchtower tablet: Yanille
+2584 3097 0		8012	Watchtower	4460=1	212=14	Y	T	19	4	Watchtower tablet: Yanille
 2953 3224 0		11741				Y	T	19	4	Rimmington tablet
 2893 3465 0		11742				Y	T	19	4	Taverley tablet
 3340 3004 0		11743				Y	T	19	4	Pollnivneach tablet
@@ -290,11 +290,16 @@
 2336 3802 0		23458		4494=1		Y	F	19	4	4. Enchanted lyre(i): Neitiznot
 3105 9315 2		6707		1574>0		Y	F	19	4	1. Camulet: Enakhra's Temple
 3191 2924 0		6707		4485=1;1574>0		Y	F	19	4	2. Camulet: Enakhra's Temple Entrance
-1713 3612 0		21760;25818	The Depths of Despair	6028=1;6035>1		Y	T	19	4	1. Kharedst's memoirs: Lunch by the Lancalliums
-1802 3748 0		21760;25818	The Queen of Thieves	6038=1;6035>1		Y	T	19	4	2. Kharedst's memoirs: The Fisher's Flute
-1478 3576 0		21760;25818	Tale of the Righteous	6359=1;6035>1		Y	T	19	4	3. Kharedst's memoirs: History and Hearsay
-1544 3762 0		21760;25818	The Forsaken Tower	7801=1;6035>1		Y	T	19	4	4. Kharedst's memoirs: Jewellery of Jubilation
-1680 3746 0		21760;25818	The Ascent of Arceuus	7857=1;6035>1		Y	T	19	4	5. Kharedst's memoirs: A Dark Disposition
+1713 3612 0		21760	The Depths of Despair	6028=1;6035>1		Y	T	19	4	1. Kharedst's memoirs: Lunch by the Lancalliums
+1802 3748 0		21760	The Queen of Thieves	6038=1;6035>1		Y	T	19	4	2. Kharedst's memoirs: The Fisher's Flute
+1478 3576 0		21760	Tale of the Righteous	6359=1;6035>1		Y	T	19	4	3. Kharedst's memoirs: History and Hearsay
+1544 3762 0		21760	The Forsaken Tower	7801=1;6035>1		Y	T	19	4	4. Kharedst's memoirs: Jewellery of Jubilation
+1680 3746 0		21760	The Ascent of Arceuus	7857=1;6035>1		Y	T	19	4	5. Kharedst's memoirs: A Dark Disposition
+1713 3612 0		25818	The Depths of Despair	6028=1;6035>1		Y	T	19	4	1. Book of the dead: Lunch by the Lancalliums
+1802 3748 0		25818	The Queen of Thieves	6038=1;6035>1		Y	T	19	4	2. Book of the dead: The Fisher's Flute
+1478 3576 0		25818	Tale of the Righteous	6359=1;6035>1		Y	T	19	4	3. Book of the dead: History and Hearsay
+1544 3762 0		25818	The Forsaken Tower	7801=1;6035>1		Y	T	19	4	4. Book of the dead: Jewellery of Jubilation
+1680 3746 0		25818	The Ascent of Arceuus	7857=1;6035>1		Y	T	19	4	5. Book of the dead: A Dark Disposition
 3649 3230 0		22400				Y	F	19	4	Drakan's medallion: Ver Sinhaza
 3592 3337 0		22400	Sins of the Father			Y	F	19	4	Drakan's medallion: Darkmeyer
 # todo: this only works if you've used a Slepey tablet on the medallion										
@@ -331,6 +336,12 @@
 2019 6434 0		28327				Y	T	19	4	Ring of shadows: The Scar
 2588 6435 0		28327				Y	T	19	4	Ring of shadows: Lassar Undercity
 1175 3424 0		28327				Y	T	19	4	Ring of shadows: The Stranglewood
+1491 3283 0		29893		11175=1		Y	T	19	4	1. Pendant of ates: Darkfrost
+1668 3223 0		29893		11176=1		Y	T	19	4	2. Pendant of ates: Twilight Temple
+1459 3138 0		29893		11177=1		Y	T	19	4	3. Pendant of ates: Ralos' Rise
+1426 2995 0		29893		11178=1		Y	T	19	4	4. Pendant of ates: North Aldarin
+1367 3087 0		29893		16752=1		Y	T	19	4	5. Pendant of ates: Kastori
+1364 3275 0		29893		16757=1		Y	T	19	4	6. Pendant of ates: Nemus Retreat
 										
 #Quetzal Whistle										
 1585 3053 0		29271;29273;29275	Children of the Sun			Y	T	19	4	Quetzal whistle

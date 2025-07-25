@@ -34,6 +34,7 @@ import net.runelite.client.plugins.mta.telekinetic.TelekineticRoom;
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
 
 import java.awt.event.KeyEvent;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
@@ -44,7 +45,7 @@ import static net.runelite.client.plugins.microbot.util.magic.Rs2Magic.getRs2Sta
 import static net.runelite.client.plugins.microbot.util.magic.Rs2Magic.getRs2Tome;
 
 public class MageTrainingArenaScript extends Script {
-    public static String version = "1.1.2";
+    public static String version = "1.1.4";
 
     private static boolean firstTime = false;
 
@@ -188,7 +189,8 @@ public class MageTrainingArenaScript extends Script {
         Predicate<Rs2ItemModel> additionalItemPredicate = x -> !x.getName().toLowerCase().contains("rune")
                 && !x.getName().toLowerCase().contains("staff")
                 && !x.getName().toLowerCase().contains("tome")
-                && !previousRewards.contains(x.getId());
+                && !previousRewards.contains(x.getId())
+                && !x.getName().toLowerCase().contains("bass");
 
         if (Rs2Inventory.contains(additionalItemPredicate)) {
             if (!Rs2Bank.walkToBankAndUseBank())
@@ -280,19 +282,14 @@ public class MageTrainingArenaScript extends Script {
             return;
         }
 
-        boolean successFullLoot = Rs2Inventory.waitForInventoryChanges(() -> {
-            Rs2GroundItem.loot(ItemID.MAGICTRAINING_DRAGONSTONE, 12);
-            sleepUntil(() -> !Rs2Player.isMoving());
-        });
+        boolean successFullLoot = Rs2GroundItem.loot(ItemID.MAGICTRAINING_DRAGONSTONE, 12) && Rs2Inventory.waitForInventoryChanges(5000);
 
         if (successFullLoot && Rs2Inventory.emptySlotCount() > 0)
             return;
 
         var bonusShape = getBonusShape();
         if (bonusShape == null) return;
-
         var object = Rs2GameObject.getGameObject(obj -> (obj.getId() == bonusShape.getObjectId()) && Rs2Camera.isTileOnScreen(obj));
-
         if (object == null) {
             var index = Rs2Random.between(0, 4);
             Rs2Walker.walkTo(new WorldPoint[]{
@@ -304,13 +301,11 @@ public class MageTrainingArenaScript extends Script {
             Rs2Player.waitForWalking();
             return;
         }
-
         int itemId;
         if (Rs2Inventory.contains(ItemID.MAGICTRAINING_DRAGONSTONE))
             itemId = ItemID.MAGICTRAINING_DRAGONSTONE;
         else
             itemId = bonusShape.getItemId();
-
         if (Rs2Inventory.contains(ItemID.MAGICTRAINING_DRAGONSTONE) || Rs2Inventory.count(itemId) >= shapesToPick) {
             shapesToPick = Rs2Random.between(2, 4);
 
@@ -319,11 +314,12 @@ public class MageTrainingArenaScript extends Script {
             sleepGaussian(600, 150);
             Rs2Inventory.interact(itemId);
 
-            sleepUntil(() -> !Rs2Inventory.contains(itemId) || itemId != ItemID.MAGICTRAINING_DRAGONSTONE && bonusShape != getBonusShape(), 20_000);
-        } else if (Rs2Inventory.waitForInventoryChanges(() -> Rs2GameObject.interact(object, "Take-from")) && Rs2Player.getWorldLocation().distanceTo(object.getWorldLocation()) > 10) {
-            Rs2Walker.setTarget(null);
-        } else
+            sleepUntil(() -> !Rs2Inventory.contains(itemId) || itemId != ItemID.MAGICTRAINING_DRAGONSTONE && bonusShape != getBonusShape(), 20000);
+        } else if (Rs2GameObject.interact(object, "Take-from")) {
+            Rs2Inventory.waitForInventoryChanges(1000);
+        } else if (Rs2Player.getWorldLocation().distanceTo(object.getWorldLocation()) > 10){
             Rs2Walker.walkFastCanvas(object.getWorldLocation());
+        }
     }
 
     private EnchantmentShapes getBonusShape() {
@@ -347,7 +343,7 @@ public class MageTrainingArenaScript extends Script {
         if (room.getTarget() != null)
             target = room.getTarget();
         else {
-            Rs2Walker.walkTo(teleRoom.getMaze(), 2);
+            Rs2Walker.walkTo(teleRoom.getMaze(), 4);
             sleepUntil(() -> room.getTarget() != null, 10_000);
             // MageTrainingArenaScript is dependent on the official mage arena plugin of runelite
             // In some cases it glitches out and target is not defined by an arrow, in this case we will reset them room
@@ -363,8 +359,8 @@ public class MageTrainingArenaScript extends Script {
         var localTarget = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), target);
         var targetConverted = WorldPoint.fromLocalInstance(Microbot.getClient(), Objects.requireNonNull(localTarget));
 
-        if (Microbot.getClient().getScale() < 400) {
-            Rs2Camera.setZoom(Rs2Random.between(400, 430));
+        if (Rs2Camera.getZoom() < 40 || Rs2Camera.getZoom() > 60) {
+            Rs2Camera.setZoom(Rs2Random.betweenInclusive(40,60));
         }
 
         if (room.getGuardian().getWorldLocation().equals(room.getFinishLocation())) {
@@ -373,7 +369,7 @@ public class MageTrainingArenaScript extends Script {
             Rs2Npc.interact(new Rs2NpcModel(room.getGuardian()), "New-maze");
             sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo(teleRoom.getArea()) != 0);
         } else {
-            if (!Rs2Player.getWorldLocation().equals(targetConverted)
+            while (!Rs2Player.getWorldLocation().equals(targetConverted)
                     && (Microbot.getClient().getLocalDestinationLocation() == null
                     || !Microbot.getClient().getLocalDestinationLocation().equals(localTarget))) {
                 if (Rs2Camera.isTileOnScreen(localTarget) && Rs2Player.getWorldLocation().distanceTo(targetConverted) < 10) {
@@ -382,9 +378,11 @@ public class MageTrainingArenaScript extends Script {
                 } else {
                     Rs2Walker.walkTo(targetConverted);
                 }
+                sleepUntil(() -> !Rs2Player.isMoving());
             }
 
             if (!Rs2Player.isAnimating()
+                    && !Rs2Player.isMoving()
                     && StreamSupport.stream(Microbot.getClient().getProjectiles().spliterator(), false).noneMatch(x -> x.getId() == SpotanimID.TELEGRAB_TRAVEL)
                     && !TelekineticRoom.getMoves().isEmpty()
                     && TelekineticRoom.getMoves().peek() == room.getPosition()
@@ -392,10 +390,11 @@ public class MageTrainingArenaScript extends Script {
                     && !room.getGuardian().getLocalLocation().equals(room.getDestination())) {
                 Rs2Magic.cast(MagicAction.TELEKINETIC_GRAB);
                 sleepGaussian(600, 150);
-                if (!Rs2Camera.isTileOnScreen(room.getGuardian().getLocalLocation())) {
+                if (Rs2Random.dicePercentage(50)) {
                     Rs2Camera.turnTo(room.getGuardian());
                 }
                 Rs2Npc.interact(new Rs2NpcModel(room.getGuardian()));
+                sleepUntil(()->room.getGuardian().getId() != NpcID.MAGICTRAINING_GUARD_MAZE_MOVING);
             }
         }
     }
@@ -413,6 +412,11 @@ public class MageTrainingArenaScript extends Script {
         if (mtaPlugin.getGraveyardRoom().getCounter() != null && mtaPlugin.getGraveyardRoom().getCounter().getCount() >= boneGoal) {
             Rs2Magic.cast(btp ? MagicAction.BONES_TO_PEACHES : MagicAction.BONES_TO_BANANAS);
             Rs2Player.waitForAnimation();
+            if(!Rs2Tab.isCurrentTab(InterfaceTab.INVENTORY)){
+                sleep(500,1000);
+                Rs2Tab.switchTo(InterfaceTab.INVENTORY);
+                sleep(500,1000);
+        }
             return;
         }
 
@@ -430,13 +434,23 @@ public class MageTrainingArenaScript extends Script {
                         sleepGaussian(1400, 350);
                 }
             }
-
-            Rs2Inventory.waitForInventoryChanges(() -> Rs2GameObject.interact(new WorldPoint(3354, 9639, 1), "Deposit"));
+            if (Rs2Inventory.contains(ItemID.BANANA, ItemID.PEACH)) {
+            Rs2GameObject.interact(new WorldPoint(3354, 9639, 1), "Deposit");
+                Rs2Inventory.waitForInventoryChanges(5000);
+        }
             return;
         }
-
-        Rs2GameObject.interact(new WorldPoint(3352, 9637, 1), "Grab");
-        Rs2Player.waitForWalking();
+        if (mtaPlugin.getGraveyardRoom().getCounter() == null){
+            Rs2GameObject.interact(new WorldPoint(3352, 9637, 1), "Grab");
+            sleepUntil(()->!Rs2Player.isMoving() && Rs2Inventory.waitForInventoryChanges(2000));
+        }
+        while (mtaPlugin.getGraveyardRoom().getCounter() != null && mtaPlugin.getGraveyardRoom().getCounter().getCount() < boneGoal && isRunning()){
+            System.out.println("Plugin Counter: " + mtaPlugin.getGraveyardRoom().getCounter().getCount() + " boneGoal: " + boneGoal);
+            Rs2GameObject.interact(new WorldPoint(3352, 9637, 1), "Grab");
+            Rs2Inventory.waitForInventoryChanges(5000);
+            boneGoal = (Rs2Inventory.items().filter(x -> x.getName().equalsIgnoreCase("Animals' bones")).count()+Rs2Inventory.emptySlotCount());
+            sleepGaussian(400, 150);
+        }
     }
 
     private void handleAlchemistRoom() {
@@ -444,8 +458,9 @@ public class MageTrainingArenaScript extends Script {
 
         var room = mtaPlugin.getAlchemyRoom();
         var best = room.getBest();
-        var item = Rs2Inventory.get(best.getId());
+        var item = Rs2Inventory.getLast(best.getId());
         if (item != null) {
+            sleep(50,150);
             Rs2Magic.alch(item);
             return;
         }else {
@@ -462,11 +477,14 @@ public class MageTrainingArenaScript extends Script {
 
         if (room.getSuggestion() == null) {
             Rs2GameObject.interact("Cupboard", "Search");
+            sleep(300,600);
 
             if (sleepUntilTrue(Rs2Player::isMoving, 100, 1000))
                 sleepUntil(() -> !Rs2Player.isMoving());
         } else {
-            Rs2Inventory.waitForInventoryChanges(() -> Rs2GameObject.interact(room.getSuggestion().getGameObject(), "Take-5"));
+            Rs2GameObject.interact(room.getSuggestion().getGameObject(), "Take-5");
+            Rs2Inventory.waitForInventoryChanges(3000);
+            sleep(300,600);
         }
     }
 
