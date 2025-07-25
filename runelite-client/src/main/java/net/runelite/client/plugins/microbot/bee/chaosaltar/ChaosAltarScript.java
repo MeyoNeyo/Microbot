@@ -24,6 +24,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
+import static net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkFastCanvas;
 import static net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkTo;
 
 @Slf4j
@@ -93,9 +94,17 @@ public class ChaosAltarScript extends Script {
                         else offerBones();
                         break;
                     case WALK_TO_ALTAR:
-                        walkTo(CHAOS_ALTAR_POINT_SOUTH);
-                        if (config.giveBonesFast()) offerBonesFast();
-                        else offerBones();
+                        // Use Rs2Walker to handle doors and obstacles properly
+                        if (!isAtChaosAltar()) {
+                            Microbot.log("Walking to Chaos Altar using Rs2Walker (handles doors)");
+                            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                            sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 1, 10000);
+                        }
+                        // Once at altar, offer bones
+                        if (isAtChaosAltar()) {
+                            if (config.giveBonesFast()) offerBonesFast();
+                            else offerBones();
+                        }
                         break;
                     case DIE_TO_NPC:
                         dieToNpc();
@@ -128,9 +137,29 @@ public class ChaosAltarScript extends Script {
         final GameObject gameObject = getChaosAltar();
         if (gameObject == null) return false;
 
-        final boolean reachable = Rs2GameObject.isReachable(gameObject);
-        log.info("Found Chaos Altar GameObject at: {}. Reachable={}", gameObject.getWorldLocation(), reachable);
+        boolean reachable = Rs2GameObject.isReachable(gameObject);
+        WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        int distanceToAltar = gameObject.getWorldLocation().distanceTo(playerLocation);
+        
+        // More strict check: must be reachable AND within 1 tile for accurate altar access
+        if (reachable && distanceToAltar <= 1) {
+            reachable = true;
+        } else {
+            reachable = false;
+        }
+        
+        log.info("Found Chaos Altar GameObject at: {}. Distance: {}, Reachable={}", 
+                gameObject.getWorldLocation(), distanceToAltar, reachable);
         return reachable;
+    }
+    
+    /**
+     * Check if player is near altar but potentially blocked by door or other obstacles
+     */
+    public boolean isNearChaosAltarArea() {
+        WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        return CHAOS_ALTAR_AREA.contains(playerLocation) || 
+               playerLocation.distanceTo(CHAOS_ALTAR_POINT) <= 1;
     }
 
 
@@ -187,26 +216,38 @@ public class ChaosAltarScript extends Script {
         }
 
         if (hasBurningAmulet()) {
-            // Teleport to wilderness using burning amulet
-            Rs2Equipment.interact("Burning amulet", "Chaos Temple");
-            
-            // Wait until we're in the wilderness after teleporting
-            sleepUntil(() -> Rs2Pvp.isInWilderness(), 5000);
-            
-            // Enable world hopping immediately after entering wilderness
-            if (config != null && config.enableWorldHopping()) {
-                Microbot.log("Entered wilderness - world hopping is now active");
-                ChaosAltarWorldHopManager.setHoppingEnabled(true);
-            }
-            
             // Walk to the altar area
-            walkTo(CHAOS_ALTAR_POINT_SOUTH);
+            walkFastCanvas(CHAOS_ALTAR_POINT_SOUTH);
+            //walkTo(CHAOS_ALTAR_POINT_SOUTH);
+            sleepUntil(() -> Rs2Pvp.isInWilderness(), 5000);
         }
     }
 
     private Rs2ItemModel getLastBone() {
         return Rs2Inventory.getBones().stream()
                 .max(Comparator.comparingInt(Rs2ItemModel::getSlot)).orElse(null);
+    }
+    
+    /**
+     * Bury all bones in inventory to save them when altar is unreachable during combat
+     */
+    private void buryAllBones() {
+        Microbot.log("Burying all bones to save them from PKers!");
+        
+        Rs2ItemModel bone;
+        while ((bone = getLastBone()) != null && isRunning()) {
+            int boneCountBefore = Rs2Inventory.getBones().size();
+            Rs2Inventory.interact(bone, "Bury");
+            
+            // Wait for bone to be buried
+            sleepUntil(() -> Rs2Inventory.getBones().size() < boneCountBefore || 
+                            Rs2Player.waitForXpDrop(Skill.PRAYER, 300), 1000);
+            
+            // Brief pause between burials
+            sleep(Rs2Random.between(100, 300));
+        }
+        
+        Microbot.log("Finished burying all bones");
     }
 
     private void offerBones() {
@@ -241,11 +282,31 @@ public class ChaosAltarScript extends Script {
     }
 
     private void offerBonesFast() {
-        Microbot.log("Offering bones at altar - IN OFFERBONES");
+        Microbot.log("Offering bones at altar - IN OFFERBONES FAST");
 
-        if (!CHAOS_ALTAR_AREA.contains(Rs2Player.getWorldLocation())) {
-            if (Rs2Player.getWorldLocation().getY() > 3650) {walkTo(
-                    CHAOS_ALTAR_POINT);
+        // If under attack and near altar, prioritize offering over positioning
+        if (Rs2Player.isInCombat()) {
+            if (!isAtChaosAltar() && isNearChaosAltarArea()) {
+                // Try quick walk to altar
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar(), 1500);
+            }
+            
+            if (!isAtChaosAltar()) {
+                // Can't reach altar while in combat, bury bones to save them
+                buryAllBones();
+                return;
+            }
+        }
+
+        // Check if we're actually at the altar before offering
+        if (!isAtChaosAltar()) {
+            if (isNearChaosAltarArea()) {
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar(), 3000);
+            } else {
+                walkTo(CHAOS_ALTAR_POINT);
+                return;
             }
         }
 
@@ -253,7 +314,8 @@ public class ChaosAltarScript extends Script {
         while ((lastBones = getLastBone()) != null
                 && isRunning()
                 && !Rs2Player.isInCombat()
-                && Rs2GameObject.exists(CHAOS_ALTAR)) {
+                && Rs2GameObject.exists(CHAOS_ALTAR)
+                && isAtChaosAltar()) { // Ensure we stay at altar
             int boneCountBefore = Rs2Inventory.getBones().size();
             Rs2Inventory.interact(lastBones, "use");
             // Very short wait for interaction to register
@@ -264,6 +326,19 @@ public class ChaosAltarScript extends Script {
             // Brief pause between offerings for natural timing
             sleepUntil(() -> Rs2Inventory.getBones().size() < boneCountBefore || 
                             !Rs2GameObject.exists(CHAOS_ALTAR), 200);
+        }
+        
+        // If we have bones left and in combat, try to save them
+        if (Rs2Player.isInCombat() && getLastBone() != null) {
+            if (isAtChaosAltar()) {
+                // Continue offering if still at altar
+                Microbot.log("Still at altar during combat - continuing to offer bones");
+                // Continue the loop by calling recursively (but limit recursion)
+                offerBonesFast();
+            } else {
+                // No longer at altar and in combat, bury remaining bones
+                buryAllBones();
+            }
         }
     }
 
@@ -341,13 +416,25 @@ public class ChaosAltarScript extends Script {
         if (!inWilderness && hasBones) {
             return State.TELEPORT_TO_WILDERNESS;
         }
-        if (inWilderness && hasAnyBones && !atAltar) {
-            return State.WALK_TO_ALTAR;
-        }
         if (inWilderness && hasAnyBones && atAltar) {
+            // At altar and have bones - offer them
             return State.OFFER_BONES;
         }
+        if (inWilderness && hasAnyBones && !atAltar) {
+            // Have bones but not at altar - walk to altar
+            return State.WALK_TO_ALTAR;
+        }
         if (inWilderness && !hasAnyBones) {
+            // Check if we're stuck after world hop - if player is not moving and far from Chaos Fanatic
+            WorldPoint chaosFantasticLocation = new WorldPoint(2979, 3845, 0);
+            WorldPoint currentLocation = Rs2Player.getWorldLocation();
+            
+            // If we're in wilderness with no bones but far from Chaos Fanatic and not moving, walk there
+            if (currentLocation.distanceTo(chaosFantasticLocation) > 5 && !Rs2Player.isMoving()) {
+                Microbot.log("No bones in wilderness and far from Chaos Fanatic after potential world hop - walking to die");
+                Rs2Walker.walkTo(chaosFantasticLocation);
+            }
+            
             return State.DIE_TO_NPC;
         }
 

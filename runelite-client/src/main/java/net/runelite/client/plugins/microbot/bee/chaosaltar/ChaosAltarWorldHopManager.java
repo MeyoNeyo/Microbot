@@ -6,10 +6,13 @@ import net.runelite.api.Player;
 import net.runelite.api.WorldType;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.player.Rs2PlayerModel;
 import net.runelite.client.plugins.microbot.util.player.Rs2Pvp;
-import net.runelite.client.plugins.microbot.util.security.Login;
+import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.http.api.worlds.World;
 import net.runelite.http.api.worlds.WorldResult;
 
@@ -21,6 +24,8 @@ import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+
+import static net.runelite.client.plugins.microbot.util.Global.sleep;
 
 @Slf4j
 public class ChaosAltarWorldHopManager {
@@ -55,9 +60,6 @@ public class ChaosAltarWorldHopManager {
     
     // Enhanced player tracking (like wildyruniteminer)
     private static final Set<String> recentAttackers = new HashSet<>();
-    private static long lastPlayerCountUpdate = 0;
-    private static int cachedPlayerCount = 0;
-    private static final long PLAYER_COUNT_CACHE_DURATION = 500; // Cache player count for 500ms
 
     /**
      * Initialize and start the enhanced threaded monitoring system (like wilderness runite miner)
@@ -303,12 +305,28 @@ public class ChaosAltarWorldHopManager {
     
     /**
      * Check if we should hop based on detected players and configuration
+     * Enhanced with combat priority logic - don't hop if we should prioritize bone offering
      */
     private static boolean shouldHopBasedOnPlayers(List<Rs2PlayerModel> nearbyPlayers) {
         if (currentConfig == null || nearbyPlayers.isEmpty()) {
             return false;
         }
         
+        // PRIORITY 1: If player is under attack but at altar with bones, prioritize offering bones over hopping
+        if (shouldContinueOfferingBones()) {
+            Microbot.log("[ChaosAltar] Under attack but at altar with bones - prioritizing bone offering over world hop");
+            // Attempt to offer bones quickly while under attack
+            attemptBoneOffering();
+            return false; // Don't hop, continue offering bones
+        }
+        
+        // PRIORITY 2: Check if player is stuck without bones in wilderness after a hop
+        if (isStuckWithoutBonesInWilderness()) {
+            Microbot.log("[ChaosAltar] Player stuck without bones in wilderness - walking to Chaos Fanatic");
+            walkToChaosFantatic();
+            return false; // Don't hop, need to die first
+        }
+
         // Check cooldown (unless spam hopping mode is enabled)
         long hopCooldownMs = currentConfig.hopCooldownSeconds() * 1000L;
         boolean isSpamHopping = (currentConfig.hopCooldownSeconds() == 0);
@@ -317,7 +335,7 @@ public class ChaosAltarWorldHopManager {
             return false;
         }
         
-        // Instant hop mode - hop on any player detection
+        // Instant hop mode - hop on any player detection (unless bones priority above applied)
         if (currentConfig.instantHop() && !nearbyPlayers.isEmpty()) {
             return true;
         }
@@ -352,18 +370,6 @@ public class ChaosAltarWorldHopManager {
     }
     
     /**
-     * Check if being attacked by another player (not NPC)
-     */
-    private static boolean isBeingAttackedByPlayer() {
-        Player localPlayer = Microbot.getClient().getLocalPlayer();
-        if (localPlayer == null || localPlayer.getInteracting() == null) {
-            return false;
-        }
-        
-        return localPlayer.getInteracting() instanceof Player;
-    }
-    
-    /**
      * Trigger a world hop from the detection system
      */
     private static void triggerWorldHop(String reason) {
@@ -375,6 +381,13 @@ public class ChaosAltarWorldHopManager {
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastHopTime < HOP_COOLDOWN_MS) {
             return;
+        }
+        
+        // If player is under attack but still at altar with bones, prioritize offering bones
+        if (shouldContinueOfferingBones()) {
+            Microbot.log("[ChaosAltar] Under attack but at altar with bones - delaying hop to save bones");
+            attemptBoneOffering();
+            return; // Don't hop yet, give bones priority
         }
         
         Microbot.log("[ChaosAltar] " + reason + " - hopping worlds");
@@ -658,6 +671,228 @@ public class ChaosAltarWorldHopManager {
         }
 
         return false;
+    }
+
+    /**
+     * Check if we should continue offering bones instead of hopping
+     * This prioritizes bone offering when player is under attack and has bones to offer
+     * If player is bound/frozen and can't move, we'll bury bones instead
+     */
+    private static boolean shouldContinueOfferingBones() {
+        // Only delay hopping if player is in combat
+        if (!Rs2Player.isInCombat()) {
+            return false;
+        }
+        
+        // Check if we have bones to offer
+        if (Rs2Inventory.getBones().isEmpty()) {
+            return false; // No bones to offer
+        }
+        
+        // Must be in wilderness (where the chaos altar is)
+        if (!Rs2Pvp.isInWilderness()) {
+            return false; // Not in wilderness, can't reach chaos altar
+        }
+        
+        // Check if player is bound/frozen and can't move
+        if (isPlayerBoundOrFrozen()) {
+            Microbot.log("[ChaosAltar] Player is bound/frozen - will bury bones to save them");
+            buryAllBonesQuickly();
+            return false; // Don't continue offering, we buried them instead
+        }
+        
+        // Player has bones and is under attack in wilderness - prioritize offering bones
+        // The script will handle walking to altar if needed
+        return true;
+    }
+    
+    /**
+     * Check if player is bound, frozen, or otherwise unable to move
+     * This includes bind, snare, entangle, stun, and other movement-restricting effects
+     */
+    private static boolean isPlayerBoundOrFrozen() {
+        // Check if player is stunned (includes bind/snare/entangle effects)
+        if (Rs2Player.isStunned()) {
+            return true;
+        }
+        
+        // Check for specific bind/freeze spot animations
+        if (Rs2Player.hasSpotAnimation(181) ||  // BIND_IMPACT
+            Rs2Player.hasSpotAnimation(180) ||  // SNARE_IMPACT  
+            Rs2Player.hasSpotAnimation(179) ||  // ENTANGLE_IMPACT
+            Rs2Player.hasSpotAnimation(245)) {  // General stunned animation
+            return true;
+        }
+        
+        // Additional check: if player is in combat but unable to move for several ticks
+        if (Rs2Player.isInCombat() && !Rs2Player.isMoving()) {
+            // Brief check to see if player can start moving
+            WorldPoint currentPos = Rs2Player.getWorldLocation();
+            if (currentPos != null) {
+                // Store position and check if player is stuck
+                long currentTime = System.currentTimeMillis();
+                if (lastStuckCheckTime == 0) {
+                    lastStuckCheckTime = currentTime;
+                    lastStuckPosition = currentPos;
+                    return false;
+                }
+                
+                // If player hasn't moved for 3+ seconds while in combat, consider them bound
+                if (currentTime - lastStuckCheckTime > 3000 && 
+                    currentPos.equals(lastStuckPosition)) {
+                    Microbot.log("[ChaosAltar] Player appears to be bound - hasn't moved for 3+ seconds in combat");
+                    return true;
+                }
+                
+                // Reset if player moved
+                if (!currentPos.equals(lastStuckPosition)) {
+                    lastStuckCheckTime = 0;
+                    lastStuckPosition = null;
+                }
+            }
+        } else {
+            // Reset stuck detection when not in combat
+            lastStuckCheckTime = 0;
+            lastStuckPosition = null;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Quickly bury all bones in inventory when player is bound/frozen
+     * This is faster than trying to walk to altar when movement is restricted
+     */
+    private static void buryAllBonesQuickly() {
+        try {
+            List<Rs2ItemModel> bones = Rs2Inventory.getBones();
+            if (bones.isEmpty()) {
+                return;
+            }
+            
+            Microbot.log("[ChaosAltar] Burying " + bones.size() + " bones due to movement restriction");
+            
+            for (Rs2ItemModel bone : bones) {
+                if (Rs2Inventory.interact(bone, "Bury")) {
+                    // Very brief wait between bone burying
+                    sleep(50);
+                } else {
+                    Microbot.log("[ChaosAltar] Failed to bury bone: " + bone.getName());
+                }
+            }
+            
+            Microbot.log("[ChaosAltar] Finished burying bones while bound/frozen");
+            
+        } catch (Exception e) {
+            log.error("[ChaosAltar] Error burying bones when bound/frozen", e);
+        }
+    }
+    
+    // Static variables for stuck detection
+    private static long lastStuckCheckTime = 0;
+    private static WorldPoint lastStuckPosition = null;
+    
+    /**
+     * Check if player is stuck without bones in wilderness (after world hop)
+     */
+    private static boolean isStuckWithoutBonesInWilderness() {
+        // Must be in wilderness
+        if (!Rs2Pvp.isInWilderness()) {
+            return false;
+        }
+        
+        // Must not have bones
+        if (!Rs2Inventory.getBones().isEmpty()) {
+            return false;
+        }
+        
+        // Must not be moving (stuck)
+        if (Rs2Player.isMoving()) {
+            return false;
+        }
+        
+        // Must be away from Chaos Fanatic area (if close, already trying to die)
+        WorldPoint chaosFantaticPoint = new WorldPoint(2979, 3845, 0);
+        WorldPoint playerLocation = getCachedLocation();
+        if (playerLocation != null && playerLocation.distanceTo(chaosFantaticPoint) < 10) {
+            return false; // Already near Chaos Fanatic
+        }
+        
+        return true; // Player is stuck in wilderness without bones
+    }
+    
+    /**
+     * Walk to Chaos Fanatic to die when stuck without bones in wilderness
+     */
+    private static void walkToChaosFantatic() {
+        try {
+            WorldPoint chaosFantaticPoint = new WorldPoint(2979, 3845, 0);
+            Microbot.log("[ChaosAltar] Walking to Chaos Fanatic to die (stuck without bones)");
+            
+            // Use Rs2Walker to walk to Chaos Fanatic
+            Rs2Walker.walkTo(chaosFantaticPoint);
+            
+        } catch (Exception e) {
+            log.error("[ChaosAltar] Error walking to Chaos Fanatic", e);
+        }
+    }
+    
+    /**
+     * Attempt to offer bones quickly when under attack
+     * This will walk to altar if needed, then offer bones to save them from PKers
+     */
+    private static void attemptBoneOffering() {
+        try {
+            // Get any bone from inventory
+            Rs2ItemModel bone = Rs2Inventory.getBones().stream().findFirst().orElse(null);
+            if (bone == null) {
+                return;
+            }
+            
+            Microbot.log("[ChaosAltar] Attempting to offer bones while under attack");
+            
+            // Check if we're at the altar
+            WorldPoint altarPoint = new WorldPoint(2949, 3820, 0);
+            WorldPoint playerLocation = getCachedLocation();
+            
+            // If not at altar, walk to it quickly
+            if (playerLocation == null || playerLocation.distanceTo(altarPoint) > 1) {
+                Microbot.log("[ChaosAltar] Walking to altar to offer bones while under attack");
+                Rs2Walker.walkFastCanvas(altarPoint);
+                
+                // Brief wait for movement to start
+                sleep(300);
+                
+                // Wait a bit for player to get closer to altar (but don't wait too long while under attack)
+                int waitAttempts = 0;
+                while (waitAttempts < 10 && Rs2Player.getWorldLocation().distanceTo(altarPoint) > 1 && Rs2Player.isMoving()) {
+                    sleep(200);
+                    waitAttempts++;
+                }
+            }
+            
+            // Try to offer bones if close enough to altar or if altar exists
+            if (Rs2GameObject.exists(411)) {
+                // Use bone on altar quickly
+                boolean boneUsed = Rs2Inventory.interact(bone, "use");
+                if (boneUsed) {
+                    // Brief wait for interaction to register
+                    sleep(100);
+                    
+                    // Click altar using object ID (411 is Chaos altar)
+                    boolean altarClicked = Rs2GameObject.interact(411);
+                    if (altarClicked) {
+                        // Brief wait for offering to complete
+                        sleep(200);
+                        Microbot.log("[ChaosAltar] Successfully offered bone while under attack");
+                    }
+                }
+            } else {
+                Microbot.log("[ChaosAltar] Could not find chaos altar to offer bones");
+            }
+        } catch (Exception e) {
+            log.error("[ChaosAltar] Error attempting bone offering during combat", e);
+        }
     }
 
     /**
