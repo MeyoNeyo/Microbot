@@ -9,6 +9,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
+import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.equipment.JewelleryLocationEnum;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
@@ -86,6 +87,9 @@ public class ChaosAltarScript extends Script {
                     case WALK_TO_BANK:
                         walkToLumbridgeBank();
                         break;
+                    case WALK_TO_NEAREST_BANK:
+                        walkToNearestBank();
+                        break;
                     case TELEPORT_TO_WILDERNESS:
                         teleportToWilderness();
                         break;
@@ -139,6 +143,7 @@ public class ChaosAltarScript extends Script {
 
         boolean reachable = Rs2GameObject.isReachable(gameObject);
         WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        //if distance from my player to altar is greater than 3 tiles, then it is not reachable 
         int distanceToAltar = gameObject.getWorldLocation().distanceTo(playerLocation);
         
         // More strict check: must be reachable AND within 1 tile for accurate altar access
@@ -205,6 +210,29 @@ public class ChaosAltarScript extends Script {
         }
     }
 
+    private void walkToNearestBank() {
+        Microbot.log("Walking to nearest bank");
+        
+        // Use Rs2Bank utility to walk to the nearest available bank
+        if (!Rs2Bank.isNearBank(10)) {
+            boolean walkSuccess = Rs2Bank.walkToBank();
+            if (walkSuccess) {
+                sleepUntil(() -> Rs2Bank.isNearBank(10), 30000);
+            } else {
+                // Fallback to Lumbridge bank if nearest bank walking fails
+                Microbot.log("Failed to walk to nearest bank, falling back to Lumbridge bank");
+                Rs2Walker.walkTo(ChaosAltarScript.lumbridgeBank);
+                sleepUntil(() -> Rs2Bank.isNearBank(10), 30000);
+            }
+        }
+        
+        // Disable world hopping when not in wilderness
+        if (config != null && config.enableWorldHopping()) {
+            ChaosAltarWorldHopManager.setHoppingEnabled(false);
+            Microbot.log("Left wilderness - world hopping disabled");
+        }
+    }
+
 
     private void teleportToWilderness() {
         // Enable protect item if needed
@@ -220,11 +248,28 @@ public class ChaosAltarScript extends Script {
             Microbot.log("Using Burning Amulet to teleport to Lava Maze before going to Chaos Altar");
             Rs2Equipment.interact("Burning amulet", "Lava Maze");
             
-            // Wait for teleport to complete - check if we're in wilderness and near Lava Maze
+            // Handle wilderness warning dialog if it appears
             sleepUntil(() -> {
+                // Check if wilderness warning dialog appears and handle it
+                if (Rs2Dialogue.hasSelectAnOption()) {
+                    // Try to find and click the teleport option
+                    if (Rs2Dialogue.hasDialogueOption("Okay, teleport")) {
+                        Microbot.log("Wilderness warning detected - selecting teleport option");
+                        Rs2Dialogue.clickOption("Okay, teleport");
+                        return false; // Continue waiting after clicking
+                    }
+                    // Fallback: if we can't find the exact text, click the first option (index 1)
+                    else if (Rs2Dialogue.hasDialogueOptionTitle("That's in level") || 
+                             Rs2Dialogue.hasDialogueOptionTitle("Wilderness")) {
+                        Microbot.log("Wilderness warning detected - selecting first option (teleport)");
+                        Rs2Dialogue.keyPressForDialogueOption(1); // First option is usually teleport
+                        return false; // Continue waiting after clicking
+                    }
+                }
+                // Check if teleport completed successfully
                 return Rs2Pvp.isInWilderness() && 
                        Rs2Player.getWorldLocation().distanceTo(JewelleryLocationEnum.LAVA_MAZE.getLocation()) <= 10;
-            }, 8000);
+            }, 10000);
             
             // If teleport was successful, walk directly to the chaos altar from Lava Maze
             if (Rs2Pvp.isInWilderness()) {
@@ -237,12 +282,12 @@ public class ChaosAltarScript extends Script {
                 }
                 
                 // Walk directly to the chaos altar from Lava Maze using Rs2Walker to handle doors/obstacles
-                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
                 sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
             } else {
                 Microbot.log("Teleport failed, falling back to manual walk to altar");
                 // Fallback to walking if teleport failed - walk directly to altar
-                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
                 sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
                 
                 // Enable world hopping when we finally enter wilderness
@@ -254,7 +299,7 @@ public class ChaosAltarScript extends Script {
         } else {
             Microbot.log("No burning amulet found, walking manually to Chaos Altar");
             // Fallback if no burning amulet - walk directly to altar
-            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+            Rs2Walker.walkFastCanvas(CHAOS_ALTAR_POINT);
             sleepUntil(() -> Rs2Pvp.isInWilderness() || isAtChaosAltar(), 15000);
             
             // Enable world hopping when we enter wilderness
@@ -299,7 +344,7 @@ public class ChaosAltarScript extends Script {
         if (!CHAOS_ALTAR_AREA.contains(Rs2Player.getWorldLocation())) {
             //if radius of the object chaos altar is greater than 5 tiles from the player
             if (CHAOS_ALTAR_POINT.distanceTo(Rs2Player.getWorldLocation()) > 5) {
-                walkTo(CHAOS_ALTAR_POINT);
+                walkFastCanvas(CHAOS_ALTAR_POINT);
             }
         }
 
@@ -453,7 +498,28 @@ public class ChaosAltarScript extends Script {
             return State.WALK_TO_BANK;
         }
         if (!inWilderness && !hasBones) {
-            return State.BANK;
+            // Smart banking logic: if in Lumbridge area, go to Lumbridge bank, otherwise nearest bank
+            WorldPoint currentLocation = Rs2Player.getWorldLocation();
+            WorldPoint lumbridgeCastle = new WorldPoint(3208, 3218, 0);
+            
+            // Check if player is in Lumbridge area (within reasonable distance of castle)
+            boolean isInLumbridgeArea = currentLocation.distanceTo(lumbridgeCastle) <= 20;
+            
+            if (isInLumbridgeArea) {
+                // If near Lumbridge castle, use Lumbridge bank
+                if (currentLocation.distanceTo(lumbridgeCastle) <= 20) {
+                    Microbot.log("In Lumbridge area and near castle - going to Lumbridge bank");
+                    return State.BANK;
+                } else {
+                    // In Lumbridge area but not near castle - walk to nearest bank
+                    Microbot.log("In Lumbridge area but not near castle - walking to nearest bank");
+                    return State.WALK_TO_NEAREST_BANK;
+                }
+            } else {
+                // Not in Lumbridge area - use nearest bank
+                Microbot.log("Not in Lumbridge area - going to nearest available bank");
+                return State.WALK_TO_NEAREST_BANK;
+            }
         }
         if (!inWilderness && hasBones) {
             return State.TELEPORT_TO_WILDERNESS;
