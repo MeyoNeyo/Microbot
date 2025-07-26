@@ -49,11 +49,47 @@ public class ApexFighterInfoOverlay extends OverlayPanel {
                                         .right("Version:" + ApexFighterPlugin.version)
                                         .build());
 
+                        // --- Custom Food Display ---
+                        String customFoodList = config.customFoodPriority();
+                        if (customFoodList != null && !customFoodList.trim().isEmpty()) {
+                                panelComponent.getChildren().add(LineComponent.builder()
+                                                .left("Custom Foods:")
+                                                .right(customFoodList.replace(",", ", "))
+                                                .build());
+                                
+                                // Show count of each custom food type in inventory
+                                java.util.List<net.runelite.client.plugins.microbot.util.misc.Rs2Food> customFoods = 
+                                    net.runelite.client.plugins.microbot.apexfighter.bank.BankerScript.parseCustomFoodPriority(customFoodList);
+                                
+                                int totalCustomFoodCount = 0;
+                                for (net.runelite.client.plugins.microbot.util.misc.Rs2Food food : customFoods) {
+                                    int count = net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory.count(food.getId());
+                                    totalCustomFoodCount += count;
+                                    if (count > 0) {
+                                        panelComponent.getChildren().add(LineComponent.builder()
+                                                        .left("  " + food.getName() + ":")
+                                                        .right("x" + count)
+                                                        .build());
+                                    }
+                                }
+                                
+                                panelComponent.getChildren().add(LineComponent.builder()
+                                                .left("Total Custom Food:")
+                                                .right("x" + totalCustomFoodCount)
+                                                .build());
+                        } else {
+                                // Show automatic food count
+                                int totalFoodCount = net.runelite.client.plugins.microbot.util.misc.Rs2Food.getIds().stream()
+                                    .mapToInt(net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory::count)
+                                    .sum();
+                                panelComponent.getChildren().add(LineComponent.builder()
+                                                .left("Food Count (Auto):")
+                                                .right("x" + totalFoodCount)
+                                                .build());
+                        }
+
                         // --- Loot/Cost/Profit Tracking Overlay ---
                         long totalValue = ApexFighterPlugin.getTotalLootValue();
-                        int totalCost = net.runelite.client.plugins.microbot.apexfighter.CostTracker.getInstance()
-                                        .getTotalCost();
-                        long profit = totalValue - totalCost; // Currently unused
                         panelComponent.getChildren().add(LineComponent.builder()
                                         .left("Total Loot Value:")
                                         .right(ApexFighterPlugin.formatGp(totalValue) + " gp")

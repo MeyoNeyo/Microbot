@@ -218,7 +218,23 @@ public class BankerScript extends Script {
         
         // 2. Check if food is completely depleted - SECOND PRIORITY
         if (config.useFood()) {
-            int foodCount = Rs2Food.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+            // Check if custom food list is specified
+            List<Rs2Food> customFoods = parseCustomFoodPriority(config.customFoodPriority());
+            
+            int foodCount;
+            if (!customFoods.isEmpty()) {
+                // Count only custom foods if list is specified
+                foodCount = customFoods.stream()
+                    .mapToInt(food -> Rs2Inventory.count(food.getId()))
+                    .sum();
+                log.debug("[isBankingNeeded] Using custom food list for food count: {} total from {} food types", 
+                    foodCount, customFoods.size());
+            } else {
+                // Count all food if no custom list
+                foodCount = Rs2Food.getIds().stream().mapToInt(Rs2Inventory::count).sum();
+                log.debug("[isBankingNeeded] Using automatic food detection for food count: {}", foodCount);
+            }
+            
             if (foodCount == 0) {
                 log.info("[isBankingNeeded] CRITICAL - Food completely depleted (count: 0) - banking needed immediately");
                 return true;
@@ -349,7 +365,7 @@ public class BankerScript extends Script {
             }
         }
 
-        // Withdraw food upkeep item last - prioritize highest healing food
+        // Withdraw food upkeep item last - use custom priority list or automatic selection
         for (ItemToKeep item : ItemToKeep.values()) {
             if (item.name().equals("FOOD") && item.isEnabled(config)) {
                 int count = item.getIds().stream().mapToInt(Rs2Inventory::count).sum();
@@ -362,61 +378,65 @@ public class BankerScript extends Script {
                     
                     boolean withdrawn = false;
                     
-                    // Try to withdraw food in order of healing value (highest healing first)
-                    for (Rs2Food food : Arrays.stream(Rs2Food.values())
-                            .sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed())
-                            .collect(Collectors.toList())) {
+                    // Get food list based on config (custom priority or automatic)
+                    List<Rs2Food> foodSelectionList = getFoodSelectionList(config);
+                    boolean usingCustomList = !parseCustomFoodPriority(config.customFoodPriority()).isEmpty();
+                    
+                    if (usingCustomList) {
+                        log.info("[withdrawUpkeepItems] Using CUSTOM food priority list: {}", 
+                            foodSelectionList.stream().map(Rs2Food::getName).collect(Collectors.toList()));
+                    } else {
+                        log.debug("[withdrawUpkeepItems] Using AUTOMATIC food selection (highest healing first)");
+                    }
+                    
+                    // Try to withdraw food in priority order - withdraw as much as possible from each food type
+                    int remainingNeeded = needed;
+                    for (Rs2Food food : foodSelectionList) {
+                        if (remainingNeeded <= 0) break; // All needed food has been withdrawn
                         
                         int availableInBank = Rs2Bank.count(food.getId());
-                        if (availableInBank >= needed) {
+                        if (availableInBank > 0) {
+                            int toWithdraw = Math.min(remainingNeeded, availableInBank);
                             log.info("[withdrawUpkeepItems] Found {} x{} (heal: {}) in bank, withdrawing {} pieces", 
-                                food.getName(), availableInBank, food.getHeal(), needed);
-                            Rs2Bank.withdrawX(true, food.getId(), needed);
+                                food.getName(), availableInBank, food.getHeal(), toWithdraw);
+                            Rs2Bank.withdrawX(true, food.getId(), toWithdraw);
                             
                             // Wait and verify withdrawal with correct parameters
-                            // Get current count before withdrawal for verification
                             int currentFoodCount = Rs2Inventory.count(food.getId());
                             if (waitForWithdrawal(food.getId(), currentFoodCount, 
-                                                currentFoodCount + needed, 3000)) {
-                                log.info("[withdrawUpkeepItems] Successfully withdrew {} {} (heal: {} each)", 
-                                    needed, food.getName(), food.getHeal());
+                                                currentFoodCount + toWithdraw, 3000)) {
+                                log.info("[withdrawUpkeepItems] Successfully withdrew {} {} (heal: {} each), {} still needed", 
+                                    toWithdraw, food.getName(), food.getHeal(), remainingNeeded - toWithdraw);
+                                remainingNeeded -= toWithdraw;
                                 withdrawn = true;
-                                break;
                             } else {
                                 log.warn("[withdrawUpkeepItems] Failed to withdraw correct amount of {} (ID: {})", 
                                     food.getName(), food.getId());
                             }
-                        } else if (availableInBank > 0) {
-                            log.debug("[withdrawUpkeepItems] {} has only {} in bank, need {}, trying next food type", 
-                                food.getName(), availableInBank, needed);
+                        } else {
+                            log.debug("[withdrawUpkeepItems] {} not available in bank, trying next food type", 
+                                food.getName());
                         }
                     }
                     
                     if (!withdrawn) {
-                        log.warn("[withdrawUpkeepItems] Could not withdraw required food items from bank - checking for partial amounts");
-                        
-                        // Try to withdraw whatever food is available if we can't get the full amount from one type
-                        int remainingNeeded = needed;
-                        for (Rs2Food food : Arrays.stream(Rs2Food.values())
-                                .sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed())
-                                .collect(Collectors.toList())) {
-                            
-                            if (remainingNeeded <= 0) break;
-                            
-                            int availableInBank = Rs2Bank.count(food.getId());
-                            if (availableInBank > 0) {
-                                int toWithdraw = Math.min(remainingNeeded, availableInBank);
-                                log.info("[withdrawUpkeepItems] Withdrawing {} x{} (heal: {}) as partial food", 
-                                    toWithdraw, food.getName(), food.getHeal());
-                                Rs2Bank.withdrawX(true, food.getId(), toWithdraw);
-                                
-                                if (waitForWithdrawal(food.getId(), Rs2Inventory.count(food.getId()), 
-                                                    Rs2Inventory.count(food.getId()) + toWithdraw, 3000)) {
-                                    remainingNeeded -= toWithdraw;
-                                    withdrawn = true;
-                                    log.info("[withdrawUpkeepItems] Partial withdrawal successful, {} food still needed", remainingNeeded);
-                                }
-                            }
+                        if (usingCustomList) {
+                            // With custom list, STOP the script if none of the specified foods are available
+                            log.error("[withdrawUpkeepItems] CRITICAL: None of the custom food types are available in bank!");
+                            log.error("[withdrawUpkeepItems] Custom food list: {}", 
+                                foodSelectionList.stream().map(Rs2Food::getName).collect(Collectors.toList()));
+                            log.error("[withdrawUpkeepItems] Script will stop to prevent using unwanted food types.");
+                            Microbot.pauseAllScripts.set(true);
+                            return false; // Stop banking process
+                        } else {
+                            // With automatic selection, just warn but continue
+                            log.warn("[withdrawUpkeepItems] Could not withdraw any food items from bank");
+                        }
+                    } else if (remainingNeeded > 0) {
+                        if (usingCustomList) {
+                            log.warn("[withdrawUpkeepItems] Only partially fulfilled custom food requirement - {} still needed", remainingNeeded);
+                        } else {
+                            log.warn("[withdrawUpkeepItems] Only partially fulfilled food requirement - {} still needed", remainingNeeded);
                         }
                     }
                 }
@@ -856,5 +876,92 @@ public class BankerScript extends Script {
             }
         }
         return result;
+    }
+
+    /**
+     * Attempts to withdraw partial food amounts from the provided food list
+     * @param foodList List of foods to try (in priority order)
+     * @param needed Amount of food needed
+     * @return true if any food was withdrawn, false otherwise
+     */
+    /**
+     * Parses the custom food priority list from config
+     * @param foodListString Comma-separated food names like "Shark,Lobster,Trout"
+     * @return List of Rs2Food in priority order (first item = highest priority)
+     */
+    public static List<Rs2Food> parseCustomFoodPriority(String foodListString) {
+        List<Rs2Food> priorityFoods = new ArrayList<>();
+        
+        if (foodListString == null || foodListString.trim().isEmpty()) {
+            log.debug("[parseCustomFoodPriority] No custom food list provided, will use automatic selection");
+            return priorityFoods; // Empty list means use automatic selection
+        }
+        
+        String[] foodNames = foodListString.split(",");
+        for (String foodName : foodNames) {
+            String cleanName = foodName.trim();
+            if (cleanName.isEmpty()) continue;
+            
+            // Find matching Rs2Food by name (case-insensitive)
+            Rs2Food matchedFood = findFoodByName(cleanName);
+            if (matchedFood != null) {
+                priorityFoods.add(matchedFood);
+                log.debug("[parseCustomFoodPriority] Added food '{}' (heal: {}) to priority list", 
+                    matchedFood.getName(), matchedFood.getHeal());
+            } else {
+                log.warn("[parseCustomFoodPriority] Could not find food matching name '{}' - skipping", cleanName);
+            }
+        }
+        
+        log.info("[parseCustomFoodPriority] Parsed {} valid foods from custom list: {}", 
+            priorityFoods.size(), priorityFoods.stream().map(Rs2Food::getName).collect(Collectors.toList()));
+        return priorityFoods;
+    }
+
+    /**
+     * Finds Rs2Food enum by name (case-insensitive)
+     * @param foodName Name to search for
+     * @return Matching Rs2Food or null if not found
+     */
+    private static Rs2Food findFoodByName(String foodName) {
+        for (Rs2Food food : Rs2Food.values()) {
+            if (food.getName().equalsIgnoreCase(foodName)) {
+                return food;
+            }
+        }
+        
+        // Try partial matching for common food names
+        String lowerFoodName = foodName.toLowerCase();
+        for (Rs2Food food : Rs2Food.values()) {
+            String lowerFoodEnumName = food.getName().toLowerCase();
+            if (lowerFoodEnumName.contains(lowerFoodName) || lowerFoodName.contains(lowerFoodEnumName)) {
+                log.debug("[findFoodByName] Found partial match '{}' for search term '{}'", 
+                    food.getName(), foodName);
+                return food;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Gets the appropriate food list based on config - either custom priority or automatic selection
+     * @param config ApexFighterConfig to check for custom food settings
+     * @return List of Rs2Food in order of priority
+     */
+    public static List<Rs2Food> getFoodSelectionList(ApexFighterConfig config) {
+        List<Rs2Food> customFoods = parseCustomFoodPriority(config.customFoodPriority());
+        
+        if (!customFoods.isEmpty()) {
+            log.info("[getFoodSelectionList] Using custom food priority list with {} foods", customFoods.size());
+            return customFoods;
+        } else {
+            // Fallback to automatic selection (highest healing first)
+            List<Rs2Food> automaticList = Arrays.stream(Rs2Food.values())
+                .sorted(Comparator.comparingInt(Rs2Food::getHeal).reversed())
+                .collect(Collectors.toList());
+            log.debug("[getFoodSelectionList] Using automatic food selection (highest healing first)");
+            return automaticList;
+        }
     }
 }

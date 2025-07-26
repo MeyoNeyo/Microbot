@@ -1025,6 +1025,17 @@ public interface ApexFighterConfig extends Config {
         return "";
     }
 
+    @ConfigItem(
+            keyName = "customFoodPriority",
+            name = "Custom Food Priority List",
+            description = "Comma-separated list of food names in priority order (highest priority first). Example: Shark,Lobster,Trout. If empty, uses automatic food selection by healing value. Script will stop if none of these foods are available.",
+            position = 101,
+            section = banking
+    )
+    default String customFoodPriority() {
+        return "";
+    }
+
     // World Hopping Settings (Combat Section)
     @ConfigItem(
         keyName = "maxPlayersBeforeHop",
