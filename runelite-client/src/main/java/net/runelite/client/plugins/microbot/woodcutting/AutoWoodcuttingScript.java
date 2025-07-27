@@ -1,6 +1,5 @@
 package net.runelite.client.plugins.microbot.woodcutting;
 
-import net.runelite.api.AnimationID;
 import net.runelite.api.GameObject;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
@@ -47,6 +46,14 @@ public class AutoWoodcuttingScript extends Script {
     State state = State.WOODCUTTING;
     private static WorldPoint returnPoint;
     private static final Integer[] FIRE_IDS = {26185, 49927};
+    
+    // Enhanced firemaking variables
+    private WorldPoint lastFiremakingLocation = null;
+    private WorldPoint previousPlayerLocation = null;
+    private boolean isFiremakingInProgress = false;
+    private boolean hasJustMovedEast = false;
+    private long lastFireCompletionTime = 0;
+    private long lastLocationCheckTime = 0;
     public static final List<Integer> BURNING_ANIMATION_IDS = List.of(
             FORESTRY_CAMPFIRE_BURNING_LOGS,
             FORESTRY_CAMPFIRE_BURNING_MAGIC_LOGS,
@@ -89,6 +96,12 @@ public class AutoWoodcuttingScript extends Script {
                     returnPoint = Rs2Player.getWorldLocation();
                 }
 
+                // Enhanced firemaking logic: Check for immediate movement detection
+                if (config.resetOptions() == WoodcuttingResetOptions.FIREMAKE || 
+                    config.resetOptions() == WoodcuttingResetOptions.CAMPFIRE_FIREMAKE) {
+                    checkForEastMovementAfterFire(config);
+                }
+
                 if (!config.TREE().hasRequiredLevel()) {
                     Microbot.showMessage("You do not have the required woodcutting level to cut this tree.");
                     shutdown();
@@ -104,7 +117,11 @@ public class AutoWoodcuttingScript extends Script {
                 }
 
                 if (state != State.RESETTING && (Rs2Player.isMoving() || Rs2Player.isAnimating()))
+                {
+                    // Enhanced firemaking logic: Check if player moved east after completing fire
+                    checkForEastMovementAfterFire(config);
                     return;
+                }
 
                 if (Rs2AntibanSettings.actionCooldownActive)
                     return;
@@ -230,17 +247,29 @@ public class AutoWoodcuttingScript extends Script {
                 Rs2Inventory.use("tinderbox");
                 sleepUntil(Rs2Inventory::isItemSelected);
                 Rs2Inventory.useLast(config.TREE().getLogID());
+                // Mark that firemaking is starting and set initial location tracking
+                isFiremakingInProgress = true;
+                lastFiremakingLocation = Rs2Player.getWorldLocation();
+                previousPlayerLocation = Rs2Player.getWorldLocation();
             }, 300, 100);
         }
         else if (!isFiremake() && useCampfire) {
-            Rs2Inventory.useItemOnObject(config.TREE().getLogID(),fire.getId());
-            sleepUntil(() -> (!Rs2Player.isMoving() && Rs2Widget.findWidget("How many would you like to burn?", null, false) != null), 5000);
-            Rs2Random.waitEx(400,200);
-            Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
+            if (fire != null) {
+                Rs2Inventory.useItemOnObject(config.TREE().getLogID(),fire.getId());
+                sleepUntil(() -> (!Rs2Player.isMoving() && Rs2Widget.findWidget("How many would you like to burn?", null, false) != null), 5000);
+                Rs2Random.waitEx(400,200);
+                Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
+            }
         }
-        sleepUntil(() -> !isFiremake());
-        if (!isFiremake()) {sleepUntil(() -> cannotLightFire, 1500);}
-        if (!cannotLightFire && isFiremake()) {sleepUntil(() -> Rs2Player.waitForXpDrop(Skill.FIREMAKING, 40000), 40000);}
+        
+        // Don't use long sleeps - let the movement detection handle the timing
+        sleepUntil(() -> !isFiremake(), 100); // Much shorter timeout
+        if (!isFiremake()) {sleepUntil(() -> cannotLightFire, 1000);} // Reduced timeout
+        
+        // Only wait for XP if movement detection hasn't triggered
+        if (!cannotLightFire && isFiremake() && !hasJustMovedEast) {
+            sleepUntil(() -> Rs2Player.waitForXpDrop(Skill.FIREMAKING, 5000), 5000); // Reduced timeout
+        }
     }
 
     private WorldPoint fireSpot(int distance) {
@@ -282,7 +311,7 @@ public class AutoWoodcuttingScript extends Script {
     }
     
     private boolean isFlectching() {
-        return Rs2Player.isAnimating(3000) && Rs2Player.getLastAnimationID() == AnimationID.FLETCHING_BOW_CUTTING;
+        return Rs2Player.isAnimating(3000) && Rs2Player.getLastAnimationID() == 1248; // FLETCHING_BOW_CUTTING
     }
 
     public static WorldPoint getReturnPoint(AutoWoodcuttingConfig config) {
@@ -298,12 +327,118 @@ public class AutoWoodcuttingScript extends Script {
         sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo(getReturnPoint(config)) <= 4);
     }
 
+    /**
+     * Enhanced firemaking logic: Checks if player moved east after completing a fire
+     * and immediately starts the next fire. Uses real-time position checking for faster detection.
+     */
+    private void checkForEastMovementAfterFire(AutoWoodcuttingConfig config) {
+        WorldPoint currentLocation = Rs2Player.getWorldLocation();
+        long currentTime = System.currentTimeMillis();
+        
+        // Only proceed if we're in a firemaking mode
+        if (!(config.resetOptions() == WoodcuttingResetOptions.FIREMAKE || 
+              config.resetOptions() == WoodcuttingResetOptions.CAMPFIRE_FIREMAKE)) {
+            return;
+        }
+
+        // Initialize tracking if this is the first time
+        if (lastFiremakingLocation == null) {
+            lastFiremakingLocation = currentLocation;
+            previousPlayerLocation = currentLocation;
+            lastLocationCheckTime = currentTime;
+            return;
+        }
+
+        // Check for position changes every tick to catch movement immediately
+        if (previousPlayerLocation != null && !currentLocation.equals(previousPlayerLocation)) {
+            // Player has moved - check if it's eastward movement after firemaking
+            if (isFiremakingInProgress && 
+                currentLocation.getX() > previousPlayerLocation.getX() && 
+                currentLocation.getY() == previousPlayerLocation.getY() &&
+                currentLocation.getPlane() == previousPlayerLocation.getPlane()) {
+                
+                // Player moved east! This means fire was successfully lit
+                Microbot.log("Player moved east - fire completed, starting next fire immediately");
+                isFiremakingInProgress = false;
+                hasJustMovedEast = true;
+                lastFireCompletionTime = currentTime;
+                
+                // Immediately attempt to start next fire if we have supplies
+                if (Rs2Inventory.hasItem(TINDERBOX) && Rs2Inventory.hasItem(config.TREE().getLog())) {
+                    quickStartNextFire(config);
+                }
+            }
+            
+            // Update previous location for next comparison
+            previousPlayerLocation = currentLocation;
+        }
+
+        // If player isn't moving but we were tracking firemaking, check if animation stopped
+        if (isFiremakingInProgress && !isFiremake() && !Rs2Player.isMoving()) {
+            // Animation stopped without east movement - firemaking completed or failed
+            isFiremakingInProgress = false;
+            lastFireCompletionTime = currentTime;
+            Microbot.log("Firemaking animation ended without movement");
+        }
+
+        // Reset east movement flag if player moves in other directions or after delay
+        if (hasJustMovedEast && (currentTime - lastFireCompletionTime > 2000 || 
+            (currentLocation.getY() != lastFiremakingLocation.getY()))) {
+            hasJustMovedEast = false;
+        }
+
+        // Update tracking location when player stops moving
+        if (!Rs2Player.isMoving() && currentTime - lastLocationCheckTime > 100) {
+            lastFiremakingLocation = currentLocation;
+            lastLocationCheckTime = currentTime;
+        }
+    }
+
+    /**
+     * Quickly starts the next fire without delays for optimal firemaking speed
+     */
+    private void quickStartNextFire(AutoWoodcuttingConfig config) {
+        if (!Rs2Inventory.hasItem(TINDERBOX) || !Rs2Inventory.hasItem(config.TREE().getLog())) {
+            return;
+        }
+
+        // Don't start if we're already firemaking or if there's already a fire here
+        if (isFiremake() || Rs2Player.isStandingOnGameObject()) {
+            return;
+        }
+
+        Microbot.log("Quick-starting next fire - player moved east");
+        
+        // Use tinderbox on log immediately without waiting
+        Rs2Inventory.use("tinderbox");
+        sleepUntil(Rs2Inventory::isItemSelected, 300); // Reduced timeout for faster response
+        
+        if (Rs2Inventory.isItemSelected()) {
+            Rs2Inventory.useLast(config.TREE().getLogID());
+            isFiremakingInProgress = true;
+            // Reset the east movement flag since we're starting a new fire
+            hasJustMovedEast = false;
+            // Update our tracking location for the new fire
+            lastFiremakingLocation = Rs2Player.getWorldLocation();
+            previousPlayerLocation = Rs2Player.getWorldLocation();
+        }
+    }
+
     @Override
     public void shutdown() {
         super.shutdown();
         returnPoint = null;
         initialPlayerLocation = null;
 		hasAutoHopMessageShown = false;
+        
+        // Reset enhanced firemaking tracking
+        lastFiremakingLocation = null;
+        previousPlayerLocation = null;
+        isFiremakingInProgress = false;
+        hasJustMovedEast = false;
+        lastFireCompletionTime = 0;
+        lastLocationCheckTime = 0;
+        
         Rs2Antiban.resetAntibanSettings();
     }
 }

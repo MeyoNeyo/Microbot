@@ -32,7 +32,6 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -59,12 +58,27 @@ class SessionClient {
 
         try (Response response = client.newCall(request).execute()) {
             ResponseBody body = response.body();
+            
+            if (!response.isSuccessful()) {
+                throw new IOException("Session endpoint returned error: " + response.code() + " " + response.message());
+            }
+            
+            if (body == null) {
+                throw new IOException("Session endpoint returned empty response");
+            }
 
             InputStream in = body.byteStream();
-            return gson.fromJson(new InputStreamReader(in, StandardCharsets.UTF_8), UUID.class);
+            String responseText = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            
+            // Check if response looks like HTML error page
+            if (responseText.trim().startsWith("<!DOCTYPE") || responseText.trim().startsWith("<html")) {
+                throw new IOException("Session endpoint returned HTML instead of JSON. Server may be down or misconfigured.");
+            }
+            
+            return gson.fromJson(responseText, UUID.class);
         } catch (JsonParseException | IllegalArgumentException ex) // UUID.fromString can throw IllegalArgumentException
         {
-            throw new IOException(ex);
+            throw new IOException("Failed to parse session response: " + ex.getMessage(), ex);
         }
     }
 
