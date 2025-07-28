@@ -9,7 +9,6 @@ import net.runelite.api.kit.KitType;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.mining.enums.Rocks;
-import net.runelite.client.plugins.microbot.shortestpath.ShortestPathPlugin;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.antiban.enums.Activity;
@@ -24,12 +23,14 @@ import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.plugins.microbot.util.security.Login;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.api.Player;
-import net.runelite.api.MenuAction;
 
 
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import static net.runelite.api.ObjectID.POOL_OF_REFRESHMENT;
 
@@ -44,18 +45,20 @@ public class WildernessRuniteMiningScript extends Script {
     private final WorldPoint FEROX_ENCLAVE_BANK = new WorldPoint(3130, 3631, 0);
     private static final WorldPoint LUMBRIDGE_BANK_TILE = new WorldPoint(3209, 3220, 2);
     private final WorldPoint RUNITE_ORE_TILE = new WorldPoint(3059, 3884, 0);
-    private boolean isBanking = false;
+    private volatile boolean isBanking = false;
     private long scriptStartTime;
-    private boolean fleeingFromPlayer = false;
-
+    private volatile boolean fleeingFromPlayer = false;
+    private final AtomicLong fleeingStartTime = new AtomicLong(0);
+    private static final long FLEEING_TIMEOUT_MS = 60000; // 60 seconds timeout
+    private volatile WorldPoint lastKnownLocation = null;
 
     private final AtomicBoolean scriptRunning = new AtomicBoolean(false);
     @Getter
     private final Set<String> recentAttackers = new HashSet<>();
 
-    private Thread worldHopThread;
-    private Thread combatThread;
-    private Thread zoneThread;
+    private ScheduledFuture<?> worldHopFuture;
+    private ScheduledFuture<?> combatFuture;
+    private ScheduledFuture<?> zoneFuture;
 
     private void updateStatus(String message) {
         String timestamp = java.time.LocalTime.now().withNano(0).toString();
@@ -63,10 +66,71 @@ public class WildernessRuniteMiningScript extends Script {
         Microbot.log("[Status] " + timestamp + " → " + message);
     }
 
-    private void stopAllThreads() {
-        if (worldHopThread != null) worldHopThread.interrupt();
-        if (combatThread != null) combatThread.interrupt();
-        if (zoneThread != null) zoneThread.interrupt();
+    /**
+     * Thread-safe method to start fleeing from a player
+     */
+    private void startFleeingFromPlayer(String attackerName) {
+        if (!fleeingFromPlayer) {
+            fleeingFromPlayer = true;
+            fleeingStartTime.set(System.currentTimeMillis());
+            lastKnownLocation = Rs2Player.getWorldLocation();
+            recentAttackers.add(attackerName);
+            updateStatus("⚠️ Started fleeing from player: " + attackerName + " at " + lastKnownLocation);
+        }
+    }
+
+    /**
+     * Thread-safe method to stop fleeing from a player
+     */
+    private void stopFleeingFromPlayer(String reason) {
+        if (fleeingFromPlayer) {
+            fleeingFromPlayer = false;
+            fleeingStartTime.set(0);
+            lastKnownLocation = null;
+            updateStatus("✅ Stopped fleeing: " + reason);
+        }
+    }
+
+    /**
+     * Check if player died (detects Lumbridge spawn or other death indicators)
+     */
+    private boolean isPlayerDead() {
+        WorldPoint currentLocation = Rs2Player.getWorldLocation();
+        
+        // Primary death detection: Lumbridge spawn area
+        if (currentLocation.distanceTo(new WorldPoint(3222, 3218, 0)) < 25) {
+            return true;
+        }
+        
+        // Additional death indicators
+        if (Rs2Player.getHealthPercentage() == 100 && 
+            lastKnownLocation != null && 
+            currentLocation.distanceTo(lastKnownLocation) > 50) {
+            // Suddenly full health and far from last known location
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if fleeing has timed out
+     */
+    private boolean hasFleeingTimedOut() {
+        long startTime = fleeingStartTime.get();
+        return startTime > 0 && (System.currentTimeMillis() - startTime) > FLEEING_TIMEOUT_MS;
+    }
+
+    private void stopAllFutures() {
+        if (worldHopFuture != null && !worldHopFuture.isDone()) {
+            worldHopFuture.cancel(true);
+        }
+        if (combatFuture != null && !combatFuture.isDone()) {
+            combatFuture.cancel(true);
+        }
+        if (zoneFuture != null && !zoneFuture.isDone()) {
+            zoneFuture.cancel(true);
+        }
     }
 
     private boolean preparePickaxeAndAxe() {
@@ -113,49 +177,82 @@ public class WildernessRuniteMiningScript extends Script {
         return hasPick;
     }
 
-    private void startWorldHopThread() {
-        worldHopThread = new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted() && scriptRunning.get()) {
-                if (shouldHopWorld()) {
+    private void startWorldHopMonitoring() {
+        worldHopFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            try {
+                if (!scriptRunning.get()) return;
+                
+                String hopReason = shouldHopWorldWithReason();
+                if (hopReason != null) {
                     int world = Login.getRandomWorld(Rs2Player.isMember());
                     Microbot.hopToWorld(world);
-                    updateStatus("World hop triggered. New world: " + world);
+                    updateStatus("🌍 WORLD HOP: " + hopReason + " → World " + world);
+                    Microbot.log("🌍 WORLD HOP REASON: " + hopReason + " | New World: " + world);
                 }
-                sleep(2000);
+            } catch (Exception e) {
+                updateStatus("Error in world hop monitoring: " + e.getMessage());
             }
-        });
-        worldHopThread.start();
+        }, 0, 2, TimeUnit.SECONDS);
     }
 
-    private boolean shouldHopWorld() {
+    private String shouldHopWorldWithReason() {
         WorldPoint loc = Rs2Player.getWorldLocation();
-        return loc.getY() > 3643 && Microbot.getClient().getPlayers().stream() //if above ferox encalve can start changing worlds
-                .anyMatch(p -> p != null && !p.equals(Microbot.getClient().getLocalPlayer()));
+        
+        // Only hop if we're above Ferox Enclave (in wilderness)
+        if (loc.getY() <= 3643) {
+            return null; // Don't hop if we're at Ferox or below
+        }
+        
+        // Check for other players
+        long playerCount = Microbot.getClient().getPlayers().stream()
+                .filter(p -> p != null && !p.equals(Microbot.getClient().getLocalPlayer()))
+                .count();
+        
+        if (playerCount > 0) {
+            return "Player(s) detected in wilderness (" + playerCount + " players)";
+        }
+        
+        return null; // No reason to hop
     }
 
     private void monitorZone() {
-        zoneThread = new Thread(() -> {
-            boolean previouslyInFerox = true;
-            while (!Thread.currentThread().isInterrupted() && scriptRunning.get()) {
+        zoneFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            try {
+                if (!scriptRunning.get()) return;
+                
                 boolean inFerox = Rs2Player.getWorldLocation().distanceTo(FEROX_ENCLAVE_BANK) < 30;
                 if (inFerox) {
                     updateStatus("Detected in Ferox. Preparing tools.");
                     preparePickaxeAndAxe();
                 }
-                if (!inFerox && previouslyInFerox) {
-                    updateStatus("Left Ferox, enabling world hop thread.");
-                    startWorldHopThread();
-                }
-                previouslyInFerox = inFerox;
-                sleep(3000);
+                // Note: Removed world hop logic as it should be managed separately
+            } catch (Exception e) {
+                updateStatus("Error in zone monitoring: " + e.getMessage());
             }
-        });
-        zoneThread.start();
+        }, 0, 3, TimeUnit.SECONDS);
     }
 
     private void monitorCombatAndHealth() {
-        combatThread = new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted() && scriptRunning.get()) {
+        combatFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            try {
+                if (!scriptRunning.get()) return;
+
+                // **CRITICAL FIX**: Check for death and timeout first
+                if (isPlayerDead()) {
+                    stopFleeingFromPlayer("Player died - detected respawn");
+                    return;
+                }
+
+                if (hasFleeingTimedOut()) {
+                    stopFleeingFromPlayer("Fleeing timeout exceeded (" + (FLEEING_TIMEOUT_MS / 1000) + "s)");
+                    return;
+                }
+
+                // Update last known location for death detection
+                if (!fleeingFromPlayer) {
+                    lastKnownLocation = Rs2Player.getWorldLocation();
+                }
+                
                 if (Rs2Combat.inCombat()) {
                     Player local = Microbot.getClient().getLocalPlayer();
 
@@ -163,28 +260,23 @@ public class WildernessRuniteMiningScript extends Script {
                             .filter(p -> p != null && !p.equals(local) && p.getInteracting() == local)
                             .findFirst()
                             .ifPresent(attacker -> {
-                                if (!fleeingFromPlayer) {
-                                    fleeingFromPlayer = true;
-                                    recentAttackers.add(attacker.getName());
-                                    updateStatus("⚠️ Under attack by player: " + attacker.getName());
+                                startFleeingFromPlayer(attacker.getName());
 
-                                    if (Rs2Player.getHealthPercentage() < 50 &&
-                                            !Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_ITEM)) {
-                                        Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_ITEM);
-                                        updateStatus("🛡️ Low HP → Protect Item activated.");
-                                    }
-
-                                    stopWalking();
-                                    updateStatus("🏃 Fleeing to Ferox Enclave...");
-                                    walkToFerox();
+                                if (Rs2Player.getHealthPercentage() < 50 &&
+                                        !Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_ITEM)) {
+                                    Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_ITEM);
+                                    updateStatus("🛡️ Low HP → Protect Item activated.");
                                 }
+
+                                stopWalking();
+                                updateStatus("🏃 Fleeing to Ferox Enclave...");
+                                walkToFerox();
                             });
                 }
-
-                sleep(1000);
+            } catch (Exception e) {
+                updateStatus("Error in combat monitoring: " + e.getMessage());
             }
-        });
-        combatThread.start();
+        }, 0, 1, TimeUnit.SECONDS);
     }
 
 
@@ -251,30 +343,37 @@ public class WildernessRuniteMiningScript extends Script {
 
         monitorCombatAndHealth();
         monitorZone();
+        startWorldHopMonitoring();
+        
+        // Log world hopping configuration
+        updateStatus("🌍 World Hopping enabled for: 1) Player detection in wilderness 2) No rocks found 3) Mining failed to start");
+        Microbot.log("🌍 WORLD HOP TRIGGERS: Player detection, No rocks, Mining animation failure");
 
-        new Thread(() -> {
-            while (scriptRunning.get()) {
+        // Main script logic using ScheduledExecutorService
+        mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            try {
+                if (!scriptRunning.get()) return;
+                
                 if (!Microbot.isLoggedIn()) {
                     updateStatus("Not logged in. Waiting...");
-                    sleep(600);
-                    continue;
+                    return;
                 }
 
-                if (Rs2Player.getWorldLocation().distanceTo(new WorldPoint(3222, 3218, 0)) < 25) {
-                    updateStatus("Detected in Lumbridge. Starting recovery...");
+                // **ENHANCED DEATH DETECTION**: Check death and timeout states first
+                if (isPlayerDead()) {
+                    updateStatus("Detected death. Starting recovery...");
+                    stopFleeingFromPlayer("Player died - detected respawn");
                     handleLumbridgeDeathRecovery();
-                    continue;
+                    return;
                 }
 
                 if (fleeingFromPlayer) {
                     updateStatus("⚠️ Fleeing from player → Pausing all actions.");
                     // When arriving safely at Ferox, reset the state
                     if (Rs2Player.getWorldLocation().distanceTo(FEROX_ENCLAVE_BANK) < 5) {
-                        updateStatus("✅ Safe at Ferox. Resuming script.");
-                        fleeingFromPlayer = false;
+                        stopFleeingFromPlayer("Arrived safely at Ferox Enclave");
                     } else {
-                        sleep(1000);
-                        continue;
+                        return; // Continue fleeing
                     }
                 }
 
@@ -303,13 +402,13 @@ public class WildernessRuniteMiningScript extends Script {
                         walkToOre();
                     }
 
-                    continue;
+                    return;
                 }
 
                 if (Rs2Player.getWorldLocation().distanceTo(RUNITE_ORE_TILE) > 3) {
                     updateStatus("Walking to Runite ore tile...");
                     walkToOre();
-                    continue;
+                    return;
                 }
 
                 GameObject rock = Rs2GameObject.findReachableObject(
@@ -317,18 +416,19 @@ public class WildernessRuniteMiningScript extends Script {
 
                 if (rock != null && !Rs2Player.isAnimating()) {
                     int oreBefore = Rs2Inventory.count("Runite ore");
-                    updateStatus("Rock found. Attempting to mine...");
+                    updateStatus("✅ Rock found. Attempting to mine...");
 
                     if (Rs2GameObject.interact(rock, "Mine")) {
                         boolean startedMining = sleepUntil(Rs2Player::isAnimating, 2000);
 
                         if (!startedMining) {
-                            updateStatus("Mining did not start → Hopping world.");
                             int world = Login.getRandomWorld(Rs2Player.isMember());
+                            String hopReason = "Mining animation failed to start (rock possibly depleted or lag)";
+                            updateStatus("🌍 WORLD HOP: " + hopReason + " → World " + world);
+                            Microbot.log("🌍 WORLD HOP REASON: " + hopReason + " | New World: " + world);
                             Microbot.hopToWorld(world);
-                            updateStatus("Hopped to world: " + world);
                             sleep(2000);
-                            continue;
+                            return;
                         }
 
                         // Wait until mining finishes
@@ -338,22 +438,25 @@ public class WildernessRuniteMiningScript extends Script {
                         int oreAfter = Rs2Inventory.count("Runite ore");
 
                         if (oreAfter > oreBefore) {
-                            updateStatus("Successfully mined ore.");
+                            updateStatus("⛏️ Successfully mined ore! (No world hop needed)");
+                        } else {
+                            updateStatus("⛏️ Mining completed but no ore gained");
                         }
 
                         sleep(500);
                     }
                 } else if (rock == null) {
-                    updateStatus("No rock found → Hopping world.");
                     int world = Login.getRandomWorld(Rs2Player.isMember());
+                    String hopReason = "No runite rocks found at location (all rocks depleted or taken)";
+                    updateStatus("🌍 WORLD HOP: " + hopReason + " → World " + world);
+                    Microbot.log("🌍 WORLD HOP REASON: " + hopReason + " | New World: " + world);
                     Microbot.hopToWorld(world);
-                    updateStatus("Hopped to world: " + world);
                     sleep(2000);
                 }
-
-                sleep(600);
+            } catch (Exception e) {
+                updateStatus("Error in main loop: " + e.getMessage());
             }
-        }).start();
+        }, 0, 600, TimeUnit.MILLISECONDS);
     }
 
 
@@ -366,7 +469,7 @@ public class WildernessRuniteMiningScript extends Script {
     public void shutdown() {
         updateStatus("Shutting down script.");
         scriptRunning.set(false);
-        stopAllThreads();
+        stopAllFutures();
         Rs2Antiban.resetAntibanSettings();
         stopWalking();
         super.shutdown();
@@ -443,12 +546,9 @@ public class WildernessRuniteMiningScript extends Script {
 
     private void handleLumbridgeDeathRecovery() {
         updateStatus("Died → Recovering from Lumbridge");
-
-        // Reset fleeing state since we died and respawned safely
-        if (fleeingFromPlayer) {
-            fleeingFromPlayer = false;
-            updateStatus("Reset fleeing state after death recovery.");
-        }
+        
+        // **CRITICAL**: Ensure fleeing state is reset
+        stopFleeingFromPlayer("Death recovery initiated");
 
         boolean hasPickaxe = Rs2Inventory.contains(item -> item.getName().toLowerCase().contains("pickaxe"));
         boolean hasAxe = Rs2Inventory.contains(item -> item.getName().toLowerCase().contains(" axe"));
