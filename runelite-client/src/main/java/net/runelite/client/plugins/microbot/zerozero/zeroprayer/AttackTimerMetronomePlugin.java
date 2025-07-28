@@ -41,8 +41,6 @@ import net.runelite.client.game.ItemStats;
 import net.runelite.client.game.NPCManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -88,6 +86,9 @@ public class AttackTimerMetronomePlugin extends Plugin
     @Inject
     private NPCManager npcManager;
 
+    // Defensive Prayer Manager
+    private DefensivePrayerManager defensivePrayerManager;
+
     public int tickPeriod = 0;
 
     final int ATTACK_DELAY_NONE = 0;
@@ -129,7 +130,7 @@ public class AttackTimerMetronomePlugin extends Plugin
     private boolean cachedIsChargedStaff = false;
     private int lastCheckedWeaponId = -1;
 
-    private static final int OUT_OF_COMBAT_TIMEOUT_TICKS = 150; // ~3000ms (150 game ticks)
+    private static final int OUT_OF_COMBAT_TIMEOUT_TICKS = 25; // ~500ms (25 game ticks) - align with defensive prayers
     private int outOfCombatTicks = 0; // Counter for time since last attack
 
     @Subscribe
@@ -174,6 +175,64 @@ public class AttackTimerMetronomePlugin extends Plugin
         // event.getSource() will be null if the player cast a spell, it's only for area sounds.
         soundEffectTick = client.getTickCount();
         soundEffectId = event.getSoundId();
+    }
+
+    /**
+     * Handles animation changes for defensive prayer switching.
+     * This is used to detect enemy attacks and activate appropriate defensive prayers.
+     */
+    @Subscribe
+    public void onAnimationChanged(AnimationChanged event)
+    {
+        if (defensivePrayerManager != null && config.enableDefensivePrayers()) {
+            Actor actor = event.getActor();
+            Player localPlayer = client.getLocalPlayer();
+            
+            // Only process animations from other actors (not the local player)
+            if (actor != null && !actor.equals(localPlayer)) {
+                // Check if this actor is targeting the local player or is our current target
+                boolean isTargetingPlayer = actor.getInteracting() == localPlayer;
+                boolean isOurTarget = localPlayer != null && localPlayer.getInteracting() == actor;
+                
+                if (isTargetingPlayer || isOurTarget) {
+                    int animationId = actor.getAnimation();
+                    if (animationId != -1) {
+                        EnemyAttackType attackType = EnemyAnimationData.getAttackType(animationId);
+                        if (attackType != EnemyAttackType.UNKNOWN && attackType.hasDefensivePrayer()) {
+                            log.debug("Enemy animation detected: Actor={}, Animation={}, Type={}", 
+                                     getActorName(actor), animationId, attackType);
+                            activateDefensivePrayer(attackType);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Handles projectile detection for defensive prayer switching.
+     * This provides the highest priority defense as projectiles are immediate threats.
+     */
+    @Subscribe
+    public void onProjectileMoved(ProjectileMoved event)
+    {
+        if (defensivePrayerManager != null && config.enableDefensivePrayers()) {
+            Projectile projectile = event.getProjectile();
+            Player localPlayer = client.getLocalPlayer();
+            
+            if (projectile != null && localPlayer != null) {
+                // Check if the projectile is targeting the player
+                if (isProjectileTargetingPlayer(projectile, localPlayer)) {
+                    int projectileId = projectile.getId();
+                    EnemyAttackType attackType = EnemyProjectileData.getAttackType(projectileId);
+                    
+                    if (attackType != EnemyAttackType.UNKNOWN && attackType.hasDefensivePrayer()) {
+                        log.debug("Enemy projectile detected: ID={}, Type={}", projectileId, attackType);
+                        activateDefensivePrayer(attackType);
+                    }
+                }
+            }
+        }
     }
 
     // endregion
@@ -545,7 +604,12 @@ public class AttackTimerMetronomePlugin extends Plugin
         AttackTimerMetronomeConfig.PrayerMode prayerMode = config.enableLazyFlicking();
         int ticksUntilAttack = getTicksUntilNextAttack();
 
-        // Skip all prayer logic if PrayerMode is NONE
+        // Handle Defensive Prayer Logic (Priority 1 - Most Important)
+        if (defensivePrayerManager != null) {
+            defensivePrayerManager.handleDefensivePrayers();
+        }
+
+        // Skip all offensive prayer logic if PrayerMode is NONE
         if (prayerMode == AttackTimerMetronomeConfig.PrayerMode.NONE) return;
 
         // Handle Lazy Flick Mode
@@ -576,8 +640,11 @@ public class AttackTimerMetronomePlugin extends Plugin
         else if (prayerMode == AttackTimerMetronomeConfig.PrayerMode.NORMAL)
         {
             boolean isAttacking = isPlayerAttacking();
+            
+            // Enhanced combat detection - also check if we're being attacked
+            boolean isInCombat = isAttacking || isPlayerBeingAttacked();
 
-            if (isAttacking)
+            if (isInCombat)
             {
                 Rs2PrayerEnum offensivePrayer = determineOffensivePrayer(getAttackStyle());
                 if (offensivePrayer != null && !offensivePrayer.equals(activePrayer))
@@ -664,6 +731,89 @@ public class AttackTimerMetronomePlugin extends Plugin
         }
     }
 
+    /**
+     * Helper method to check if the player is being attacked by any NPC or Player.
+     */
+    private boolean isPlayerBeingAttacked()
+    {
+        Player localPlayer = client.getLocalPlayer();
+        if (localPlayer == null) return false;
+        
+        // Check all NPCs to see if any are targeting the player
+        for (NPC npc : client.getTopLevelWorldView().npcs()) {
+            if (npc != null && npc.getInteracting() == localPlayer) {
+                // Additional checks to ensure it's a valid threat
+                if (!npc.isDead() && npc.getHealthRatio() != 0) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check all Players to see if any are targeting the player (PvP)
+        if (config.enablePvpMode()) {
+            for (Player player : client.getTopLevelWorldView().players()) {
+                if (player != null && player != localPlayer && player.getInteracting() == localPlayer) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Helper method to activate defensive prayers based on enemy attack type.
+     */
+    private void activateDefensivePrayer(EnemyAttackType attackType)
+    {
+        Rs2PrayerEnum defensivePrayer = attackType.getDefensivePrayer();
+        
+        if (defensivePrayer != null) {
+            // Check if we have prayer points
+            if (Rs2Prayer.isOutOfPrayer()) {
+                log.warn("Out of prayer points, cannot activate defensive prayer");
+                return;
+            }
+
+            // Only switch if it's a different prayer than currently active
+            Rs2PrayerEnum currentDefensivePrayer = Rs2Prayer.getActiveProtectionPrayer();
+            if (!defensivePrayer.equals(currentDefensivePrayer)) {
+                Rs2Prayer.swapOverHeadPrayer(defensivePrayer);
+                log.debug("Activated defensive prayer: {}", defensivePrayer.getName());
+            }
+        }
+    }
+
+    /**
+     * Helper method to check if a projectile is targeting the player.
+     */
+    private boolean isProjectileTargetingPlayer(Projectile projectile, Player localPlayer)
+    {
+        Actor targetActor = projectile.getTargetActor();
+        
+        // Direct actor targeting
+        if (targetActor == localPlayer) {
+            return true;
+        }
+        
+        // For projectiles without an actor target, we could check position
+        // but this is more complex and might not be necessary for most cases
+        return false;
+    }
+
+    /**
+     * Helper method to get the name of an actor for logging purposes.
+     */
+    private String getActorName(Actor actor)
+    {
+        if (actor instanceof NPC) {
+            return ((NPC) actor).getName();
+        } else if (actor instanceof Player) {
+            return ((Player) actor).getName();
+        }
+        return "Unknown";
+    }
+
 
 
 
@@ -683,6 +833,11 @@ public class AttackTimerMetronomePlugin extends Plugin
             outOfCombatTicks = 0;
             prayerDeactivationTick = -1;
             Rs2Prayer.disableAllPrayers();
+            
+            // Reset defensive prayer manager when config changes
+            if (defensivePrayerManager != null) {
+                defensivePrayerManager.reset();
+            }
         }
     }
 
@@ -692,6 +847,9 @@ public class AttackTimerMetronomePlugin extends Plugin
     {
         overlayManager.add(overlay);
         overlay.setPreferredSize(DEFAULT_SIZE);
+        
+        // Initialize defensive prayer manager
+        defensivePrayerManager = new DefensivePrayerManager(config, client);
     }
 
     @Override
@@ -699,6 +857,13 @@ public class AttackTimerMetronomePlugin extends Plugin
     {
         overlayManager.remove(overlay);
         attackDelayHoldoffTicks = 0;
+        
+        // Reset defensive prayer manager
+        if (defensivePrayerManager != null) {
+            defensivePrayerManager.reset();
+            defensivePrayerManager = null;
+        }
+        
         super.shutDown();
     }
 }
