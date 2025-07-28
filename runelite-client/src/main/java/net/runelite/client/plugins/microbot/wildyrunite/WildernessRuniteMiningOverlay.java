@@ -10,7 +10,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 import javax.inject.Inject;
 import java.awt.*;
 import java.text.NumberFormat;
-/*
+
 public class WildernessRuniteMiningOverlay extends OverlayPanel {
 
     private final WildernessRuniteMiningPlugin plugin;
@@ -75,4 +75,3 @@ public class WildernessRuniteMiningOverlay extends OverlayPanel {
         return super.render(graphics);
     }
 }
-*/
