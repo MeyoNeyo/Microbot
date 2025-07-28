@@ -186,8 +186,9 @@ public class Rs2InventorySetup {
 		String itemName = setupItem.getName().toLowerCase();
 		boolean isFuzzy = setupItem.isFuzzy();
 
-		Rs2ItemModel rs2Item = Rs2Inventory.get(itemId);
-		boolean isStackable = rs2Item != null && rs2Item.isStackable();
+		// Check stackability from bank item instead of inventory item (inventory may be empty after deposit)
+		Rs2ItemModel bankItem = isFuzzy ? Rs2Bank.getBankItem(itemName, false) : Rs2Bank.getBankItem(itemId);
+		boolean isStackable = bankItem != null && bankItem.isStackable();
 
 		int desiredQuantity = setupItems.stream()
 			.mapToInt(InventorySetupsItem::getQuantity)
@@ -223,19 +224,14 @@ public class Rs2InventorySetup {
 		boolean useName = item.isFuzzy();
 		Object identifier = useName ? item.getName().toLowerCase() : item.getId();
 
-		if (quantity > 1) {
-			if (useName) {
-				Rs2Bank.withdrawX((String) identifier, quantity);
-			} else {
-				Rs2Bank.withdrawX((int) identifier, quantity);
-			}
+		// Always use withdrawX to respect the exact quantity, regardless of whether it's 1 or more
+		// This is crucial for stackable items where we might want exactly X amount
+		if (useName) {
+			Rs2Bank.withdrawX((String) identifier, quantity);
 		} else {
-			if (useName) {
-				Rs2Bank.withdrawItem((String) identifier);
-			} else {
-				Rs2Bank.withdrawItem((int) identifier);
-			}
+			Rs2Bank.withdrawX((int) identifier, quantity);
 		}
+		
 		// Using wait for inventory changes here makes sure the inventory is updated more reliably to avoid withdrawing excess items.
 		Rs2Inventory.waitForInventoryChanges(5000);
     }

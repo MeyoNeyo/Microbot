@@ -22,11 +22,14 @@ import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.plugins.microbot.util.security.Login;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
-import net.runelite.api.Player;
+import net.runelite.client.plugins.microbot.util.player.Rs2PlayerModel;
+import net.runelite.client.plugins.microbot.util.player.Rs2Pvp;
 
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.List;
+import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ScheduledFuture;
@@ -51,6 +54,9 @@ public class WildernessRuniteMiningScript extends Script {
     private final AtomicLong fleeingStartTime = new AtomicLong(0);
     private static final long FLEEING_TIMEOUT_MS = 60000; // 60 seconds timeout
     private volatile WorldPoint lastKnownLocation = null;
+    private volatile int lastKnownHitpoints = -1;
+    private volatile boolean wasInWilderness = false;
+    private volatile long lastLocationUpdateTime = 0;
 
     private final AtomicBoolean scriptRunning = new AtomicBoolean(false);
     @Getter
@@ -92,25 +98,113 @@ public class WildernessRuniteMiningScript extends Script {
     }
 
     /**
-     * Check if player died (detects Lumbridge spawn or other death indicators)
+     * Enhanced death detection using multiple indicators for robustness
      */
     private boolean isPlayerDead() {
         WorldPoint currentLocation = Rs2Player.getWorldLocation();
+        int currentHp = Microbot.getClient().getBoostedSkillLevel(net.runelite.api.Skill.HITPOINTS);
+        boolean currentlyInWilderness = isInWilderness(currentLocation);
         
-        // Primary death detection: Lumbridge spawn area
-        if (currentLocation.distanceTo(new WorldPoint(3222, 3218, 0)) < 25) {
+        // Method 1: Death animation detection (most reliable)
+        if (Rs2Player.isAnimating()) {
+            int animationId = Microbot.getClient().getLocalPlayer().getAnimation();
+            // Common death animation IDs in OSRS
+            if (animationId == 836 || animationId == 2304 || animationId == 1378) {
+                updateStatus("🔍 Death detected: Death animation (ID: " + animationId + ")");
+                return true;
+            }
+        }
+        
+        // Method 2: HP-based detection with location context
+        if (currentHp <= 0 && lastKnownHitpoints > 0) {
+            updateStatus("🔍 Death detected: HP dropped to 0");
             return true;
         }
         
-        // Additional death indicators
-        if (Rs2Player.getHealthPercentage() == 100 && 
-            lastKnownLocation != null && 
-            currentLocation.distanceTo(lastKnownLocation) > 50) {
-            // Suddenly full health and far from last known location
+        // Method 3: Wilderness → Safe zone teleportation with HP context
+        if (wasInWilderness && !currentlyInWilderness && currentHp < lastKnownHitpoints) {
+            // Common respawn locations
+            if (isAtRespawnLocation(currentLocation)) {
+                updateStatus("🔍 Death detected: Teleported from wilderness to respawn location");
+                return true;
+            }
+        }
+        
+        // Method 4: Enhanced location-based detection (improved original method)
+        // Only trigger if we were recently in wilderness and have context
+        if (wasInWilderness && isAtRespawnLocation(currentLocation)) {
+            // Additional validation: check if we lost items or HP
+            boolean lostItems = Rs2Inventory.isEmpty() && lastKnownLocation != null;
+            boolean significantHpLoss = lastKnownHitpoints > 50 && currentHp < 30;
+            
+            if (lostItems || significantHpLoss) {
+                updateStatus("🔍 Death detected: At respawn location with item/HP loss indicators");
+                return true;
+            }
+        }
+        
+        // Method 5: Sudden location change with full HP restoration
+        if (lastKnownLocation != null && wasInWilderness) {
+            double distance = currentLocation.distanceTo(lastKnownLocation);
+            long timeSinceUpdate = System.currentTimeMillis() - lastLocationUpdateTime;
+            
+            // Sudden teleportation (>100 tiles in <5 seconds) + full HP = likely death
+            if (distance > 100 && timeSinceUpdate < 5000 && currentHp >= 99) {
+                if (isAtRespawnLocation(currentLocation)) {
+                    updateStatus("🔍 Death detected: Sudden teleportation to respawn with full HP");
+                    return true;
+                }
+            }
+        }
+        
+        // Update tracking variables for next check
+        updatePlayerState(currentLocation, currentHp, currentlyInWilderness);
+        
+        return false;
+    }
+    
+    /**
+     * Check if the player is at any known respawn location
+     */
+    private boolean isAtRespawnLocation(WorldPoint location) {
+        // Lumbridge spawn area (default F2P respawn)
+        if (location.distanceTo(new WorldPoint(3222, 3218, 0)) < 25) {
+            return true;
+        }
+        
+        // Falador respawn (if player has completed certain quests)
+        if (location.distanceTo(new WorldPoint(2966, 3382, 0)) < 15) {
+            return true;
+        }
+        
+        // Camelot respawn (if player has completed certain quests)
+        if (location.distanceTo(new WorldPoint(2757, 3477, 0)) < 15) {
+            return true;
+        }
+        
+        // Edge-ville respawn (if player has high wilderness level)
+        if (location.distanceTo(new WorldPoint(3093, 3493, 0)) < 15) {
             return true;
         }
         
         return false;
+    }
+    
+    /**
+     * Check if location is in wilderness
+     */
+    private boolean isInWilderness(WorldPoint location) {
+        return location.getY() > 3520; // Wilderness starts at Y > 3520
+    }
+    
+    /**
+     * Update player state tracking for death detection
+     */
+    private void updatePlayerState(WorldPoint location, int hp, boolean inWilderness) {
+        lastKnownLocation = location;
+        lastKnownHitpoints = hp;
+        wasInWilderness = inWilderness;
+        lastLocationUpdateTime = System.currentTimeMillis();
     }
 
     /**
@@ -199,20 +293,54 @@ public class WildernessRuniteMiningScript extends Script {
         WorldPoint loc = Rs2Player.getWorldLocation();
         
         // Only hop if we're above Ferox Enclave (in wilderness)
-        if (loc.getY() <= 3643) {
+        if (loc.getY() <= 3850) {
             return null; // Don't hop if we're at Ferox or below
         }
         
-        // Check for other players
-        long playerCount = Microbot.getClient().getPlayers().stream()
-                .filter(p -> p != null && !p.equals(Microbot.getClient().getLocalPlayer()))
-                .count();
+        // Check for other players with PvP level filtering
+        List<Rs2PlayerModel> allPlayerModels = Rs2Player.getPlayers(p -> p != null && !p.equals(Rs2Player.getLocalPlayer()))
+                .collect(Collectors.toList());
         
-        if (playerCount > 0) {
-            return "Player(s) detected in wilderness (" + playerCount + " players)";
+        if (allPlayerModels.isEmpty()) {
+            return null; // No players detected
         }
         
-        return null; // No reason to hop
+        // Filter for attackable players (who can actually attack you in PvP)
+        List<Rs2PlayerModel> attackablePlayerModels = allPlayerModels.stream()
+                .filter(p -> Rs2Pvp.isAttackable(p))
+                .collect(Collectors.toList());
+        
+        // If there are players but none can attack you, stay and mine
+        if (attackablePlayerModels.isEmpty()) {
+            updateStatus("👥 " + allPlayerModels.size() + " player(s) detected but none can attack (combat level safe) → Continue mining");
+            return null; // Safe to stay
+        }
+        
+        // Build detailed reason with player info
+        StringBuilder reason = new StringBuilder();
+        reason.append("⚔️ DANGEROUS PLAYER(S) detected: ");
+        reason.append(attackablePlayerModels.size()).append(" attackable");
+        
+        if (allPlayerModels.size() > attackablePlayerModels.size()) {
+            reason.append(" (").append(allPlayerModels.size() - attackablePlayerModels.size()).append(" safe)");
+        }
+        
+        // Add combat level details for first few attackable players
+        if (attackablePlayerModels.size() <= 3) {
+            reason.append(" [");
+            for (int i = 0; i < attackablePlayerModels.size(); i++) {
+                if (i > 0) reason.append(", ");
+                Rs2PlayerModel p = attackablePlayerModels.get(i);
+                reason.append("CB").append(p.getCombatLevel());
+                String playerName = p.getName();
+                if (playerName != null && !playerName.isEmpty()) {
+                    reason.append(":").append(playerName);
+                }
+            }
+            reason.append("]");
+        }
+        
+        return reason.toString();
     }
 
     private void monitorZone() {
@@ -254,10 +382,9 @@ public class WildernessRuniteMiningScript extends Script {
                 }
                 
                 if (Rs2Combat.inCombat()) {
-                    Player local = Microbot.getClient().getLocalPlayer();
+                    Rs2PlayerModel local = Rs2Player.getLocalPlayer();
 
-                    Microbot.getClient().getPlayers().stream()
-                            .filter(p -> p != null && !p.equals(local) && p.getInteracting() == local)
+                    Rs2Player.getPlayers(p -> p != null && !p.equals(local) && p.getInteracting() == local)
                             .findFirst()
                             .ifPresent(attacker -> {
                                 startFleeingFromPlayer(attacker.getName());
