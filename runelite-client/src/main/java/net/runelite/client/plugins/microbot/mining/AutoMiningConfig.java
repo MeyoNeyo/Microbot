@@ -88,6 +88,28 @@ public interface AutoMiningConfig extends Config {
     }
 
     @ConfigItem(
+            keyName = "keepTrackOfRocks",
+            name = "Keep track of rocks",
+            description = "Enable intelligent rock tracking for smart world hopping. When disabled, uses random world hopping.",
+            position = 5,
+            section = generalSection
+    )
+    default boolean keepTrackOfRocks() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "inMiningGuild",
+            name = "In Mining Guild",
+            description = "Enable if mining in the Mining Guild (reduces Runite respawn time from 12 to 6 minutes)",
+            position = 6,
+            section = generalSection
+    )
+    default boolean inMiningGuild() {
+        return false;
+    }
+
+    @ConfigItem(
             keyName = "UseBank",
             name = "UseBank",
             description = "Use bank and walk back to original location",
