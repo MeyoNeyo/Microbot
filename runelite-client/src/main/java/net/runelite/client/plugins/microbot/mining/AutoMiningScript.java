@@ -41,8 +41,8 @@ public class AutoMiningScript extends Script {
     public boolean run(AutoMiningConfig config) {
         initialPlayerLocation = null;
         Rs2Antiban.resetAntibanSettings();
-        Rs2Antiban.antibanSetupTemplates.applyMiningSetup();
-        Rs2AntibanSettings.actionCooldownChance = 0.1;
+        //Rs2Antiban.antibanSetupTemplates.applyMiningSetup();
+        //Rs2AntibanSettings.actionCooldownChance = 0.1;
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
                 if (!super.run()) return;
@@ -109,6 +109,17 @@ public class AutoMiningScript extends Script {
                                 Rs2Player.waitForXpDrop(Skill.MINING, true);
                                 Rs2Antiban.actionCooldown();
                                 Rs2Antiban.takeMicroBreakByChance();
+                            }
+                        } else if (config.hopWorldsIfNoOre()) {
+                            // No rock found and world hopping is enabled
+                            int world = Login.getRandomWorld(Rs2Player.isMember());
+                            Microbot.status = "No ore found in stray area. Hopping to world " + world + "...";
+                            Microbot.log("🌍 WORLD HOP REASON: No " + config.ORE().getName() + " found in stray area | New World: " + world);
+                            
+                            boolean hopped = Microbot.hopToWorld(world);
+                            if (hopped) {
+                                Rs2Random.waitEx(2000, 500); // Wait for world hop to complete
+                                Microbot.status = "Hopped to world: " + world + " - Resuming mining...";
                             }
                         }
                         break;

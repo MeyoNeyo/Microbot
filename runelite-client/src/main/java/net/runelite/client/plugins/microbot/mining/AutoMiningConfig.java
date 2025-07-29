@@ -11,11 +11,13 @@ import net.runelite.client.plugins.microbot.util.inventory.InteractOrder;
         "<p></p>"+
         "<p>2. <strong>Distance to Stray:</strong> Set the maximum distance in tiles that the bot can travel from its initial position. The default distance is <em>20 tiles</em>.</p>" +
         "<p></p>"+
-        "<p>3. <strong>Banking Option:</strong> Enable or disable the use of a bank. If enabled, the bot will walk back to the original location after banking. The default setting is <em>disabled</em>.</p>" +
+        "<p>3. <strong>World Hopping:</strong> Enable world hopping if no ore is available in the stray area, or if too many players are detected.</p>" +
         "<p></p>"+
-        "<p>4. <strong>Items to Bank:</strong> Specify the items to be banked, separated by commas. The default value is <em>'ore'</em>.</p>"+
+        "<p>4. <strong>Banking Option:</strong> Enable or disable the use of a bank. If enabled, the bot will walk back to the original location after banking. The default setting is <em>disabled</em>.</p>" +
         "<p></p>"+
-        "<p>5. <strong>Basalt:</strong> If mining basalt, ensure UseBank is checked and it will automatically note at Snowflake</em>.</p>")
+        "<p>5. <strong>Items to Bank:</strong> Specify the items to be banked, separated by commas. The default value is <em>'ore'</em>.</p>"+
+        "<p></p>"+
+        "<p>6. <strong>Basalt:</strong> If mining basalt, ensure UseBank is checked and it will automatically note at Snowflake</em>.</p>")
 
 public interface AutoMiningConfig extends Config {
     @ConfigSection(
@@ -72,6 +74,17 @@ public interface AutoMiningConfig extends Config {
     )
     default int maxPlayersInArea() {
         return 0;
+    }
+
+    @ConfigItem(
+            keyName = "hopWorldsIfNoOre",
+            name = "Hop worlds if no ore",
+            description = "Automatically hop to another world if no ore is available in the stray area",
+            position = 4,
+            section = generalSection
+    )
+    default boolean hopWorldsIfNoOre() {
+        return false;
     }
 
     @ConfigItem(

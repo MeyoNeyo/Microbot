@@ -66,6 +66,12 @@ public class BarrowsScript extends Script {
                 if (!super.run()) return;
                 long startTime = System.currentTimeMillis();
 
+                // Handle dialogues first (like tunnel entrance dialogue)
+                if (Rs2Dialogue.isInDialogue()) {
+                    handleBarrowsDialogue();
+                    return;
+                }
+
                 if (Rs2Player.getQuestState(Quest.HIS_FAITHFUL_SERVANTS) != QuestState.FINISHED) {
                     Microbot.showMessage("Complete the 'His Faithful Servants' quest for the webwalker to function correctly");
                     shutdown();
@@ -262,12 +268,22 @@ public class BarrowsScript extends Script {
                                     sleepUntil(() -> Rs2Player.isMoving(), Rs2Random.between(1000, 3000));
                                     sleepUntil(() -> !Rs2Player.isMoving() || Rs2Player.isInCombat(), Rs2Random.between(3000, 6000));
                                     // the brother could take a second to spawn in.
-                                    sleepUntil(() -> Microbot.getClient().getHintArrowNpc()!=null, Rs2Random.between(750, 1500));
+                                    sleepUntil(() -> Microbot.getClient().getHintArrowNpc()!=null || Rs2Dialogue.isInDialogue(), Rs2Random.between(750, 1500));
                                 }
-                                if(Rs2Dialogue.isInDialogue() && Rs2Dialogue.hasDialogueText("You've found a hidden")){
+                                if(Rs2Dialogue.isInDialogue() && (Rs2Dialogue.hasDialogueText("You've found a hidden") || Rs2Dialogue.hasDialogueText("hidden tunnel"))){
                                     WhoisTun = brother.name;
-                                    Microbot.log(brother.name+" is our tunnel");
-                                    break;
+                                    Microbot.log(brother.name+" is our tunnel - found dialogue text: " + Rs2Dialogue.getQuestion());
+                                    
+                                    // Immediately handle the dialogue instead of returning
+                                    dialogueEnterTunnels();
+                                    
+                                    // After entering tunnels, make sure we're properly set up for tunnel navigation
+                                    if (inTunnels) {
+                                        Microbot.log("Successfully entered tunnels from " + brother.name + "'s mound");
+                                        tunnelLoopCount = 0; // Reset tunnel loop counter
+                                        varbitCheckEnabled = true; // Enable varbit checking for tunnels
+                                        return; // Exit the brother loop and continue with tunnel logic
+                                    }
                                 }
 
                                 if(Microbot.getClient().getHintArrowNpc() != null) {
@@ -335,15 +351,19 @@ public class BarrowsScript extends Script {
                                 }
                             }
                             // at this point the brother should be dead and we should be free to leave.
-                            // We could be in ahrims mound while ahrim is tunnel. We need to stop the bot from leaving the mound and going back in.
-                            if(brother.name.equals(WhoisTun) && brother.name.contains("Ahrim")) {
+                            // Check if this brother's mound is the tunnel entrance
+                            if(brother.name.equals(WhoisTun)) {
                                 if (Rs2Dialogue.isInDialogue()) {
+                                    Microbot.log("Found tunnel dialogue after killing " + brother.name + " - entering tunnels");
                                     dialogueEnterTunnels();
-                                    return;
+                                    return; // Don't leave the mound, we're going into tunnels
                                 }
                             }
 
-                            leaveTheMound();
+                            // Only leave the mound if we're not entering tunnels
+                            if (!inTunnels) {
+                                leaveTheMound();
+                            }
                         }
                     }
                 }
@@ -351,10 +371,10 @@ public class BarrowsScript extends Script {
                 if(!WhoisTun.equals("Unknown") && shouldBank == false && !inTunnels){
                     int howManyBrothersWereKilled = Microbot.getVarbitValue(Varbits.BARROWS_KILLED_DHAROK) + Microbot.getVarbitValue(Varbits.BARROWS_KILLED_GUTHAN) + Microbot.getVarbitValue(Varbits.BARROWS_KILLED_KARIL) + Microbot.getVarbitValue(Varbits.BARROWS_KILLED_TORAG) + Microbot.getVarbitValue(Varbits.BARROWS_KILLED_VERAC) + Microbot.getVarbitValue(Varbits.BARROWS_KILLED_AHRIM);
                     if(howManyBrothersWereKilled <= 4){
-                        Microbot.log("We seem to have missed someone, checking all mounds again.");
+                        Microbot.log("We found the tunnel but still have " + (6 - howManyBrothersWereKilled) + " brothers left. Checking remaining mounds.");
                         return;
                     } else {
-                        Microbot.log("Going to the tunnels.");
+                        Microbot.log("All brothers killed, proceeding to tunnels via the traditional route.");
                     }
 
                     stopFutureWalker();
@@ -782,32 +802,113 @@ public class BarrowsScript extends Script {
 
     public void dialogueEnterTunnels(){
         if (Rs2Dialogue.isInDialogue()) {
+            Microbot.log("Handling tunnel entrance dialogue");
             while(Rs2Dialogue.isInDialogue()) {
                 if (!super.isRunning()) {
                     break;
                 }
+                
+                // Handle continue button first
                 if (Rs2Dialogue.hasContinue()) {
+                    Microbot.log("Clicking continue on tunnel dialogue");
                     Rs2Dialogue.clickContinue();
-                    sleepUntil(() -> Rs2Dialogue.hasDialogueOption("Yeah I'm fearless!"), Rs2Random.between(2000, 5000));
+                    sleepUntil(() -> !Rs2Dialogue.hasContinue() || Rs2Dialogue.hasSelectAnOption(), Rs2Random.between(2000, 5000));
                     sleep(300, 600);
+                    continue;
                 }
-                if (Rs2Dialogue.hasDialogueOption("Yeah I'm fearless!")) {
-                    if (Rs2Dialogue.clickOption("Yeah I'm fearless!")) {
-                        sleepUntil(() -> Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730, Rs2Random.between(2500, 6000));
-                        //allow some time for the tunnel to load.
-                        sleep(1000, 2000);
-                        inTunnels = true;
-                    }
-                }
-                if (!Rs2Dialogue.isInDialogue()) {
+                
+                // Handle option selection dialogue - use the reliable method from Chaos Altar
+                if (Rs2Dialogue.hasSelectAnOption()) {
+                    Microbot.log("Dialogue options available - selecting option 1 (Yeah I'm fearless!)");
+                    Rs2Dialogue.keyPressForDialogueOption(1); // Option 1 is always "Yeah I'm fearless!"
+                    sleepUntil(() -> Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730, Rs2Random.between(2500, 6000));
+                    //allow some time for the tunnel to load.
+                    sleep(1000, 2000);
+                    inTunnels = true;
+                    Microbot.log("Successfully entered tunnels");
                     break;
                 }
+                
+                // Safety check - if we're no longer in dialogue but not in tunnels, something went wrong
+                if (!Rs2Dialogue.isInDialogue() && !inTunnels) {
+                    Microbot.log("Dialogue ended but not in tunnels - checking location");
+                    if (Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730) {
+                        inTunnels = true;
+                        Microbot.log("Actually in tunnels - location check successful");
+                    }
+                    break;
+                }
+                
                 if (inTunnels) {
                     break;
                 }
                 if (Rs2Player.getWorldLocation().getPlane() != 3) {
                     //we're not in the mound
                     break;
+                }
+                
+                // Small delay to prevent spam
+                sleep(300, 600);
+            }
+        }
+    }
+
+    public void handleBarrowsDialogue() {
+        if (Rs2Dialogue.isInDialogue()) {
+            String dialogueText = Rs2Dialogue.getQuestion();
+            Microbot.log("Handling dialogue: " + (dialogueText != null ? dialogueText : "No text"));
+            
+            // Handle continue button first
+            if (Rs2Dialogue.hasContinue()) {
+                Rs2Dialogue.clickContinue();
+                sleep(300, 600);
+                return;
+            }
+            
+            // Handle option selection dialogue
+            if (Rs2Dialogue.hasSelectAnOption()) {
+                String question = Rs2Dialogue.getQuestion();
+                
+                // Check if this is the tunnel entrance dialogue
+                if (question != null && (question.toLowerCase().contains("do you want to enter") || 
+                                       question.toLowerCase().contains("hidden tunnel") ||
+                                       question.toLowerCase().contains("fearless") ||
+                                       Rs2Dialogue.hasDialogueOption("Yeah I'm fearless!"))) {
+                    
+                    Microbot.log("Detected tunnel entrance dialogue - handling immediately");
+                    
+                    if (Rs2Dialogue.hasDialogueOption("Yeah I'm fearless!")) {
+                        Microbot.log("Clicking 'Yeah I'm fearless!' to enter tunnel");
+                        if (Rs2Dialogue.clickOption("Yeah I'm fearless!")) {
+                            sleepUntil(() -> Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730, Rs2Random.between(2500, 6000));
+                            sleep(1000, 2000);
+                            if (Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730) {
+                                inTunnels = true;
+                                tunnelLoopCount = 0;
+                                varbitCheckEnabled = true;
+                                Microbot.log("Successfully entered tunnels via main dialogue handler");
+                            }
+                        }
+                    } else {
+                        // Fallback - use option 1 (top option which should be "Yeah I'm fearless!")
+                        Microbot.log("Using fallback - pressing option 1 for tunnel entrance");
+                        Rs2Dialogue.keyPressForDialogueOption(1);
+                        sleepUntil(() -> Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730, Rs2Random.between(2500, 6000));
+                        sleep(1000, 2000);
+                        if (Rs2Player.getWorldLocation().getY() > 9600 && Rs2Player.getWorldLocation().getY() < 9730) {
+                            inTunnels = true;
+                            tunnelLoopCount = 0;
+                            varbitCheckEnabled = true;
+                            Microbot.log("Successfully entered tunnels via fallback");
+                        }
+                    }
+                }
+                // For other dialogues, try to handle them appropriately
+                else {
+                    Microbot.log("Unknown dialogue detected: " + (question != null ? question : "No question text"));
+                    // Try clicking the first option as a general fallback
+                    Rs2Dialogue.keyPressForDialogueOption(1);
+                    sleep(600);
                 }
             }
         }
