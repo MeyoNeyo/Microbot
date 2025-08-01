@@ -231,6 +231,47 @@ public class RockTracker {
     }
     
     /**
+     * Get a world with soon-respawning rocks (within 5 seconds) that we can hop to
+     * @param rockType The type of rock we're looking for
+     * @param location The location to search around
+     * @param searchRadius The radius to search within
+     * @return OptionalInt containing the best world, or empty if no world found
+     */
+    public static OptionalInt getWorldWithSoonRespawningRock(Rocks rockType, WorldPoint location, int searchRadius) {
+        Map<Integer, Long> worldEarliestRespawn = new HashMap<>();
+        
+        for (Map.Entry<String, List<TrackedRock>> entry : worldRockMap.entrySet()) {
+            try {
+                int world = Integer.parseInt(entry.getKey());
+                List<TrackedRock> rocks = entry.getValue();
+                
+                // Find rocks that will respawn within 5 seconds
+                OptionalLong earliestRespawn = rocks.stream()
+                        .filter(rock -> rock.getRockType().equals(rockType))
+                        .filter(rock -> rock.getWorldPoint().distanceTo(location) <= searchRadius)
+                        .filter(rock -> !rock.hasRespawned()) // Not yet respawned
+                        .filter(rock -> rock.getRemainingRespawnMs() <= 5000) // Within 5 seconds
+                        .mapToLong(TrackedRock::getRemainingRespawnMs)
+                        .min();
+                        
+                if (earliestRespawn.isPresent()) {
+                    worldEarliestRespawn.put(world, earliestRespawn.getAsLong());
+                }
+                
+            } catch (NumberFormatException e) {
+                log.warn("Invalid world key: {}", entry.getKey());
+            }
+        }
+        
+        // Return world with the rock that will respawn soonest
+        return worldEarliestRespawn.entrySet().stream()
+                .min(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .map(OptionalInt::of)
+                .orElse(OptionalInt.empty());
+    }
+    
+    /**
      * Clear all tracking data (useful when changing locations or rock types)
      */
     public static void clearAllTracking() {
