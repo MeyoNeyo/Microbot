@@ -13,8 +13,10 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.*;
 import net.runelite.api.events.*;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.OverlayMenuClicked;
@@ -34,6 +36,15 @@ import net.runelite.client.plugins.microbot.util.overlay.GembagOverlay;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.reflection.Rs2Reflection;
 import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
+import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
+import net.runelite.client.plugins.microbot.util.cache.Rs2CacheManager;
+import net.runelite.client.plugins.microbot.util.cache.Rs2VarbitCache;
+import net.runelite.client.plugins.microbot.util.cache.Rs2SkillCache;
+import net.runelite.client.plugins.microbot.util.cache.Rs2QuestCache;
+
+import net.runelite.client.plugins.microbot.util.cache.Rs2NpcCache;
+import net.runelite.client.plugins.microbot.util.cache.Rs2GroundItemCache;
+import net.runelite.client.plugins.microbot.util.cache.Rs2ObjectCache;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.Overlay;
@@ -96,8 +107,18 @@ public class MicrobotPlugin extends Plugin
 	private GembagOverlay gembagOverlay;
 	@Inject
 	private PouchOverlay pouchOverlay;
+	@Inject
+	private EventBus eventBus;
 	private GameChatAppender gameChatAppender;
-
+	
+	// Widget change tracking for overlay cache invalidation
+	private volatile boolean widgetLayoutChanged = false;
+	private Rectangle lastCheckedBounds = null;
+	private boolean lastOverlapResult = false;
+	/**
+	 * Initializes the cache system and registers all caches with the EventBus.
+	 * Cache loading from configuration will happen later during game events.
+	 */
 	@Override
 	protected void startUp() throws AWTException
 	{
@@ -120,7 +141,7 @@ public class MicrobotPlugin extends Plugin
 		// Initialize the cached configuration in GameChatAppender
 		GameChatAppender.updateConfiguration(
 			microbotConfig.enableGameChatLogging(),
-			microbotConfig.getGameChatLogLevel().toLogbackLevel(),
+			microbotConfig.getGameChatLogLevel().getLevel(),
 			microbotConfig.onlyMicrobotLogging()
 		);
 
@@ -151,11 +172,15 @@ public class MicrobotPlugin extends Plugin
 
 		Microbot.getPouchScript().startUp();
 
+		// Initialize the cache system
+		initializeCacheSystem();
+
 		if (overlayManager != null)
 		{
 			overlayManager.add(microbotOverlay);
 			overlayManager.add(gembagOverlay);
 			overlayManager.add(pouchOverlay);
+			microbotOverlay.cacheButton.hookMouseListener();
 		}
 	}
 
@@ -164,8 +189,12 @@ public class MicrobotPlugin extends Plugin
 		overlayManager.remove(microbotOverlay);
 		overlayManager.remove(gembagOverlay);
 		overlayManager.remove(pouchOverlay);
+		microbotOverlay.cacheButton.unhookMouseListener();
 		clientToolbar.removeNavigation(navButton);
 		if (gameChatAppender.isStarted()) gameChatAppender.stop();
+		
+		// Shutdown the cache system
+		shutdownCacheSystem();
 	}
 
 
@@ -178,9 +207,17 @@ public class MicrobotPlugin extends Plugin
 	@Subscribe
 	public void onRuneScapeProfileChanged(RuneScapeProfileChanged event)
 	{
-		// Handle profile changes for bank caching
-		Rs2Bank.setUnknownInitialBankState();
-		Rs2Bank.loadInitialBankStateFromConfig();
+		String newProfile = event.getNewProfile();
+		String oldProfile = event.getPreviousProfile();
+		if ((newProfile != null && !newProfile.isEmpty()) &&
+			(oldProfile == null || oldProfile.isEmpty() || !newProfile.equals(oldProfile))
+		)
+		{
+			log.info("\nReceived RuneScape profile change event from '{}' to '{}'", oldProfile, newProfile);			
+			Rs2CacheManager.handleProfileChange(newProfile, oldProfile);
+			return;
+		}
+		
 	}
 
 	@Subscribe
@@ -247,24 +284,40 @@ public class MicrobotPlugin extends Plugin
 		return shopContainerIds.stream().mapToInt(Integer::intValue).toArray();
 	}
 
-
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged gameStateChanged)
 	{
-		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
-		{
-			Microbot.setLoginTime(Instant.now());
-			Rs2RunePouch.fullUpdate();
-			Rs2Bank.setUnknownInitialBankState();
-			// Load bank state from config when logging in
-			Rs2Bank.loadInitialBankStateFromConfig();
-		}
-		if (gameStateChanged.getGameState() == GameState.HOPPING || gameStateChanged.getGameState() == GameState.LOGIN_SCREEN || gameStateChanged.getGameState() == GameState.CONNECTION_LOST)
-		{
-			// Clear bank state when logging out
-			Rs2Bank.emptyBankState();
-			Microbot.loggedIn = false;
-		}
+		
+	   if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
+	   {
+		   // Region-based login detection logic
+		   final Client client = Microbot.getClient();
+		   if (client != null) {
+				@SuppressWarnings("deprecation")
+				int[] currentRegions = client.getMapRegions();
+				int[] lastRegions = Microbot.getLastKnownRegions();
+				boolean regionsChanged = (currentRegions != null && (lastRegions == null || !Arrays.equals(currentRegions, lastRegions)));
+				boolean wasLoggedIn = Microbot.loggedIn;								
+				if (!wasLoggedIn) {
+					Microbot.setLoginTime(Instant.now());
+					Rs2RunePouch.fullUpdate();		
+					Rs2CacheManager.registerEventHandlers();						
+				}
+				if (currentRegions != null) {
+					Microbot.setLastKnownRegions(currentRegions.clone());
+				}
+				Microbot.loggedIn = true;
+		   }
+	   }
+	   if (gameStateChanged.getGameState() == GameState.HOPPING || gameStateChanged.getGameState() == GameState.LOGIN_SCREEN || gameStateChanged.getGameState() == GameState.CONNECTION_LOST)
+	   {
+		   // Clear all cache states when logging out through Rs2CacheManager		   		   
+		   //Rs2CacheManager.emptyCacheState(); // should not be nessary here, handled in ClientShutdown event, 
+		   // and we also handle correct cache loading in onRuneScapeProfileChanged event
+		   Microbot.loggedIn = false;
+		   Rs2CacheManager.unregisterEventHandlers();
+		   Microbot.setLastKnownRegions(null);		   
+	   }
 	}
 
 	@Subscribe
@@ -322,7 +375,7 @@ public class MicrobotPlugin extends Plugin
 		Microbot.getPouchScript().onMenuOptionClicked(event);
 		Rs2Gembag.onMenuOptionClicked(event);
 		Microbot.targetMenu = null;
-		System.out.println(event.getMenuEntry());
+		if (microbotConfig.enableMenuEntryLogging()) log.info(event.getMenuEntry().toString());
 	}
 
 	@Subscribe
@@ -344,31 +397,35 @@ public class MicrobotPlugin extends Plugin
 	public void onConfigChanged(ConfigChanged ev)
 	{
 		if (ev.getGroup().equals(MicrobotConfig.configGroup)) {
-			// Handle any logging-related configuration changes
-			String key = ev.getKey();
-			if (key.equals("enableGameChatLogging") || key.equals("gameChatLogLevel") || 
-				key.equals("gameChatLogPattern") || key.equals("onlyMicrobotLogging")) {
-				
-				final boolean shouldBeStarted = microbotConfig.enableGameChatLogging();
-				
-				// Update the cached configuration in GameChatAppender
-				GameChatAppender.updateConfiguration(
-					microbotConfig.enableGameChatLogging(),
-					microbotConfig.getGameChatLogLevel().toLogbackLevel(),
-					microbotConfig.onlyMicrobotLogging()
-				);
-				
-				if (shouldBeStarted) {
-					// Update pattern if needed
-					String pattern = microbotConfig.getGameChatLogPattern().getPattern();
-					gameChatAppender.setPattern(pattern);
-					
-					if (!gameChatAppender.isStarted()) {
-						gameChatAppender.start();
+			switch (ev.getKey()) {
+				case MicrobotConfig.keyEnableGameChatLogging:
+				case MicrobotConfig.keyGameChatLogPattern:
+				case MicrobotConfig.keyGameChatLogLevel:
+				case MicrobotConfig.keyOnlyMicrobotLogging:
+					// Handle any logging-related configuration changes
+					final boolean shouldBeStarted = microbotConfig.enableGameChatLogging();
+
+					// Update the cached configuration in GameChatAppender
+					GameChatAppender.updateConfiguration(
+							microbotConfig.enableGameChatLogging(),
+							microbotConfig.getGameChatLogLevel().getLevel(),
+							microbotConfig.onlyMicrobotLogging()
+					);
+
+					if (shouldBeStarted) {
+						// Update pattern if needed
+						String pattern = microbotConfig.getGameChatLogPattern().getPattern();
+						gameChatAppender.setPattern(pattern);
+
+						if (!gameChatAppender.isStarted()) {
+							gameChatAppender.start();
+						}
+					} else if (gameChatAppender.isStarted()) {
+						gameChatAppender.stop();
 					}
-				} else if (gameChatAppender.isStarted()) {
-					gameChatAppender.stop();
-				}
+					break;
+				default:
+					break;
 			}
 		}
 		if (ev.getKey().equals("displayPouchCounter"))
@@ -389,6 +446,17 @@ public class MicrobotPlugin extends Plugin
 	{
 		Rs2RunePouch.onWidgetLoaded(event);
 		
+		// Mark that widget layout has changed for cache invalidation
+		widgetLayoutChanged = true;
+		log.debug("Widget {} loaded, layout changed", event.getGroupId());
+	}
+
+	@Subscribe
+	public void onWidgetClosed(WidgetClosed event)
+	{
+		// Mark that widget layout has changed for cache invalidation
+		widgetLayoutChanged = true;
+		log.debug("Widget {} closed, layout changed", event.getGroupId());
 	}
 
 	@Subscribe
@@ -446,13 +514,108 @@ public class MicrobotPlugin extends Plugin
 
 	@Subscribe
 	public void onGameTick(GameTick event)
-	{
-		Rs2Bank.loadInitialBankStateFromConfig();
+	{		
+		// Cache loading is now handled properly during login/profile changes
+		// No need to call loadInitialCacheFromCurrentConfig on every tick
 	}
 
 	@Subscribe(priority = 100)
 	private void onClientShutdown(ClientShutdown e)
 	{
-		Rs2Bank.saveBankToConfig();
+		// Save all caches through Rs2CacheManager
+		Rs2CacheManager.savePersistentCaches();
+		Rs2CacheManager.getInstance().close();
+	}
+	
+	/**
+	 * Initializes the cache system and registers all caches with the EventBus.
+	 * Cache loading from configuration will happen later during game events when the RS profile is available.
+	 */
+	private void initializeCacheSystem() {
+		try {
+			// Get the cache manager instance
+			Rs2CacheManager cacheManager = Rs2CacheManager.getInstance();
+			
+			// Set the EventBus for cache event handling (without loading caches yet)
+			Rs2CacheManager.setEventBus(eventBus);
+			
+		
+			// Keep deprecated EntityCache for backward compatibility (for now)
+			//Rs2EntityCache.getInstance();
+			
+			log.info("Cache system initialized successfully with specialized caches");
+			log.info("Cache persistence will be loaded when RS profile becomes available");
+			log.debug("Cache statistics: {}", cacheManager.getCacheStatistics());
+			
+		} catch (Exception e) {
+			log.error("Failed to initialize cache system: {}", e.getMessage(), e);
+		}
+	}
+	
+	/**
+	 * Shuts down the cache system and cleans up resources.
+	 */
+	private void shutdownCacheSystem() {
+		try {
+			Rs2CacheManager cacheManager = Rs2CacheManager.getInstance();
+			
+			log.debug("Final cache statistics before shutdown: {}", cacheManager.getCacheStatistics());
+			
+			// Close the cache manager and all caches
+			cacheManager.close();
+			
+			// Reset singleton instances for clean shutdown
+			Rs2CacheManager.resetInstance();
+			Rs2VarbitCache.resetInstance();
+			Rs2SkillCache.resetInstance();
+			Rs2QuestCache.resetInstance();
+			
+			// Reset specialized entity cache instances
+			Rs2NpcCache.resetInstance();
+			Rs2GroundItemCache.resetInstance();
+			Rs2ObjectCache.resetInstance();
+			
+			// Reset deprecated EntityCache
+			//Rs2EntityCache.resetInstance();
+			
+			log.info("Cache system shutdown completed");
+			
+		} catch (Exception e) {
+			log.error("Error during cache system shutdown: {}", e.getMessage(), e);
+		}
+	}
+	/**
+	 * Dynamically checks if any visible widget overlaps with the specified bounds
+	 * @param overlayBounds The bounds to check for widget overlap
+	 * @return true if any visible widget overlaps with the specified bounds
+	 */
+	public boolean hasWidgetOverlapWithBounds(Rectangle overlayBoundsCanvas) {
+		if (overlayBoundsCanvas == null || Microbot.getClient() == null) {
+			return false;
+		}
+
+	   int viewportXOffset = Microbot.getClient().getViewportXOffset();
+	   int viewportYOffset = Microbot.getClient().getViewportYOffset();
+
+		// Use cached result if widget layout hasn't changed and bounds are the same
+		if (!this.widgetLayoutChanged && overlayBoundsCanvas.equals(this.lastCheckedBounds)) {
+			return this.lastOverlapResult;
+		}
+
+	   boolean result = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+		   try {
+			   return Rs2Widget.checkBoundsOverlapWidgetInMainModal(overlayBoundsCanvas, viewportXOffset, viewportYOffset);
+		   } catch (Exception e) {
+			   log.debug("Error checking widget overlap: {}", e.getMessage());
+			   return false;
+		   }
+	   }).orElse(false);
+
+		// Cache the result
+		widgetLayoutChanged = false;
+		lastCheckedBounds = new Rectangle(overlayBoundsCanvas);
+		lastOverlapResult = result;
+
+		return result;
 	}
 }
