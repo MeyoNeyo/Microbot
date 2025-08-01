@@ -58,16 +58,36 @@ public class HerbrunScript extends Script {
                 initialized = true;
                 HerbrunPlugin.status = "Gearing up";
                 populateHerbPatches();
-                if (herbPatches.isEmpty()) {                                        
-                    plugin.reportFinished("No herb patches ready to farm",true);
+                if (herbPatches.isEmpty()) {
+                    // Check if all patches are disabled in config
+                    boolean anyPatchEnabled = config.enableTrollheim() || config.enableCatherby() || 
+                                             config.enableMorytania() || config.enableVarlamore() || 
+                                             config.enableHosidius() || config.enableArdougne() || 
+                                             config.enableFalador() || config.enableWeiss() || 
+                                             config.enableGuild();
+                    
+                    if (!anyPatchEnabled) {
+                        plugin.reportFinished("No herb patches enabled in configuration. Please enable at least one patch.", true);
+                    } else {
+                        plugin.reportFinished("No herb patches ready to farm (all enabled patches are still growing or already harvested)", true);
+                    }
                     this.shutdown();
                     return;
                 }
                 var inventorySetup = new Rs2InventorySetup(config.inventorySetup(), mainScheduledFuture);
                 if (!inventorySetup.doesInventoryMatch() || !inventorySetup.doesEquipmentMatch()) {
                     Rs2Walker.walkTo(Rs2Bank.getNearestBank().getWorldPoint(), 20);
-                    if (!inventorySetup.loadEquipment() || !inventorySetup.loadInventory()) {                        
-                        plugin.reportFinished("Failed to load inventory setup",false);
+                    
+                    // Load equipment and inventory directly - these methods handle client thread calls internally
+                    boolean equipmentLoaded = inventorySetup.loadEquipment();
+                    boolean inventoryLoaded = false;
+                    
+                    if (equipmentLoaded) {
+                        inventoryLoaded = inventorySetup.loadInventory();
+                    }
+                    
+                    if (!equipmentLoaded || !inventoryLoaded) {                         
+                        plugin.reportFinished("Failed to load inventory setup - Equipment: " + equipmentLoaded + ", Inventory: " + inventoryLoaded, false);
                         return;
                     }
                     Rs2Bank.closeBank();
@@ -109,14 +129,43 @@ public class HerbrunScript extends Script {
         return true;
     }
 
+    /**
+     * Populates the herbPatches list with enabled patches that need attention.
+     * Only patches that are:
+     * 1. Enabled in the configuration (via enableTrollheim, enableCatherby, etc.)
+     * 2. Not currently growing (HARVESTABLE, EMPTY, DEAD, DISEASED, etc.)
+     * will be added to the run list.
+     * 
+     * Disabled patches will be completely skipped and not visited.
+     */
     private void populateHerbPatches() {
         this.farmingHandler = new FarmingHandler(Microbot.getClient(), configManager);
         herbPatches.clear();
         clientThread.runOnClientThreadOptional(() -> {
+            int totalPatches = 0;
+            int enabledPatches = 0;
+            int readyPatches = 0;
+            
             for (FarmingPatch patch : farmingWorld.getTabs().get(Tab.HERB)) {
+                totalPatches++;
                 HerbPatch _patch = new HerbPatch(patch, config, farmingHandler);
-                if (_patch.getPrediction() != CropState.GROWING && _patch.isEnabled()) herbPatches.add(_patch);
+                
+                // Only add patches that are enabled and need attention (not growing)
+                if (_patch.isEnabled()) {
+                    enabledPatches++;
+                    if (_patch.getPrediction() != CropState.GROWING) {
+                        herbPatches.add(_patch);
+                        readyPatches++;
+                        Microbot.log("Added patch: " + _patch.getRegionName() + " (State: " + _patch.getPrediction() + ")");
+                    } else {
+                        Microbot.log("Skipping patch: " + _patch.getRegionName() + " (Still growing)");
+                    }
+                } else {
+                    Microbot.log("Skipping disabled patch: " + _patch.getRegionName());
+                }
             }
+            
+            Microbot.log("Patch Summary - Total: " + totalPatches + ", Enabled: " + enabledPatches + ", Ready: " + readyPatches);
             return true;
         });
     }

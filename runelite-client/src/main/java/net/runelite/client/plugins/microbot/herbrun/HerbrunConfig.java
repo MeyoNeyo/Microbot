@@ -12,6 +12,10 @@ import net.runelite.client.plugins.microbot.inventorysetups.InventorySetup;
         "teleports for the enabled locations, \n" +
         "rake, spade, seed dibber \n" +
         "and ultracompost or bottomless compost.\n" +
+        "\n" +
+        "IMPORTANT: Only enabled patches will be visited.\n" +
+        "Make sure you have the required teleports for enabled patches.\n" +
+        "\n" +
         "Credits to liftedmango and See1Duck")
 @ConfigGroup("Herbrun")
 public interface HerbrunConfig extends Config {
@@ -101,9 +105,9 @@ public interface HerbrunConfig extends Config {
     }
 
     @ConfigItem(
-            keyName = "enableArdouge",
-            name = "Enable Ardouge Patch",
-            description = "Enable Ardouge patch in herb run",
+            keyName = "enableArdougne",
+            name = "Enable Ardougne Patch",
+            description = "Enable Ardougne patch in herb run",
             position = 6,
             section = locationSection
     )

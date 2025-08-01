@@ -20,6 +20,25 @@ public class HerbPatch {
     private boolean enabled;
     private final HashMap<String, Integer> items = new HashMap<>();
 
+    /**
+     * Creates a HerbPatch instance and maps it to the corresponding configuration setting.
+     * 
+     * Region Name -> Configuration Method Mapping:
+     * - "Ardougne" -> config.enableArdougne()
+     * - "Catherby" -> config.enableCatherby()
+     * - "Civitas illa Fortis" -> config.enableVarlamore()
+     * - "Falador" -> config.enableFalador()
+     * - "Farming Guild" -> config.enableGuild()
+     * - "Kourend" -> config.enableHosidius()
+     * - "Morytania" -> config.enableMorytania()
+     * - "Troll Stronghold" -> config.enableTrollheim()
+     * - "Weiss" -> config.enableWeiss()
+     * - "Harmony" -> false (intentionally disabled)
+     * 
+     * @param patch The FarmingPatch from the game
+     * @param config The plugin configuration
+     * @param farmingHandler Handler for crop state prediction
+     */
     public HerbPatch(FarmingPatch patch, HerbrunConfig config, FarmingHandler farmingHandler) {
         this.patch = patch;
         this.regionName = patch.getRegion().getName();
@@ -65,7 +84,12 @@ public class HerbPatch {
                 this.enabled = config.enableWeiss();
                 break;
             case "Harmony":
+                this.enabled = false; // Harmony is intentionally disabled
+                break;
+            default:
+                // Unknown region - disable by default and log
                 this.enabled = false;
+                System.err.println("Unknown herb patch region: " + regionName + ". Disabling patch.");
                 break;
 
         }

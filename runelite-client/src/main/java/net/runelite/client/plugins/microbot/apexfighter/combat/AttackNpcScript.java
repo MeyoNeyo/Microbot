@@ -242,6 +242,13 @@ public class AttackNpcScript extends Script {
                     Microbot.log("[AttackNpc] Combat finished, resetting to IDLE state");
                     ApexFighterPlugin.setState(State.IDLE);
                 }
+                
+                // IMPORTANT: Check if player is walking to safespot and if is distance to safespot is greater than 1 tile then return
+                // Check if player is moving and not yet on the safespot tile, then skip attacking
+                if (Rs2Player.isMoving() && !Rs2Player.getWorldLocation().equals(config.manualSafeSpotCoords())) {
+                    Microbot.log("[AttackNpc] Player is walking to safespot, skipping attack");
+                    return;
+                }
 
                 if (!attackableNpcs.isEmpty()) {
                     Microbot.log("[AttackNpc] Found " + attackableNpcs.size() + " attackable NPCs, current state: " + ApexFighterPlugin.getState());

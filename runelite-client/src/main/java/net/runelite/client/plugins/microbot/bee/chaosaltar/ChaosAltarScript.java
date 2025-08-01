@@ -9,7 +9,9 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
+import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
+import net.runelite.client.plugins.microbot.util.equipment.JewelleryLocationEnum;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -23,10 +25,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
 import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Predicate;
 
-import static net.runelite.api.ItemID.DRAGON_BONES;
-import static net.runelite.api.NpcID.CHAOS_FANATIC;
 import static net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkTo;
 
 @Slf4j
@@ -37,21 +36,48 @@ public class ChaosAltarScript extends Script {
     public static final WorldPoint CHAOS_ALTAR_POINT_SOUTH = new WorldPoint(2972, 3810,0);
 
     private static final int CHAOS_ALTAR = 411;
+    public static final WorldPoint lumbridgeBank = new WorldPoint(3209, 3220, 2);
+        
+        
 
     private ChaosAltarConfig config;
     private boolean autoRetaliate = false;
+    private boolean originalAutoRetaliateState = false; // Store original auto-retaliate setting
 
     private State currentState = State.UNKNOWN;
 
     public static boolean didWeDie = false;
 
     public boolean run(ChaosAltarConfig config, ChaosAltarPlugin plugin) {
+        this.config = config; // Store config for use in other methods
         Microbot.enableAutoRunOn = false;
+        
+        // Store original auto-retaliate state and turn it off immediately when plugin starts
+        if (!autoRetaliate) {
+            // Auto-retaliate varbit: 0 = enabled, 1 = disabled
+            originalAutoRetaliateState = Microbot.getVarbitPlayerValue(172) == 0;
+            Rs2Combat.setAutoRetaliate(false);
+            autoRetaliate = true;
+            Microbot.log("Plugin started - Auto-retaliate disabled (was: " + originalAutoRetaliateState + ")");
+        }
+        
+        // Start threaded monitoring system immediately when script starts
+        ChaosAltarWorldHopManager.startThreadedMonitoring(config);
+        
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
                 if (!Microbot.isLoggedIn()) return;
                 if (!super.run()) return;
                 long startTime = System.currentTimeMillis();
+
+                // Check if we're currently hopping worlds - if so, wait
+                if (ChaosAltarWorldHopManager.processWorldHop()) {
+                    Microbot.status = "Hopping worlds...";
+                    return;
+                }
+
+                // The threaded monitoring system now handles all player detection and world hopping
+                // No need for manual checks in the main loop anymore
 
                 if (!autoRetaliate) {
                     Rs2Combat.setAutoRetaliate(false);
@@ -68,6 +94,12 @@ public class ChaosAltarScript extends Script {
                         plugin.lockCondition.lock();
                         handleBanking();
                         break;
+                    case WALK_TO_BANK:
+                        walkToLumbridgeBank();
+                        break;
+                    case WALK_TO_NEAREST_BANK:
+                        walkToNearestBank();
+                        break;
                     case TELEPORT_TO_WILDERNESS:
                         teleportToWilderness();
                         break;
@@ -76,9 +108,17 @@ public class ChaosAltarScript extends Script {
                         else offerBones();
                         break;
                     case WALK_TO_ALTAR:
-                        walkTo(CHAOS_ALTAR_POINT_SOUTH);
-                        if (config.giveBonesFast()) offerBonesFast();
-                        else offerBones();
+                        // Use Rs2Walker to handle doors and obstacles properly
+                        if (!isAtChaosAltar()) {
+                            Microbot.log("Walking to Chaos Altar using Rs2Walker (handles doors)");
+                            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                            sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 1, 10000);
+                        }
+                        // Once at altar, offer bones
+                        if (isAtChaosAltar()) {
+                            if (config.giveBonesFast()) offerBonesFast();
+                            else offerBones();
+                        }
                         break;
                     case DIE_TO_NPC:
                         dieToNpc();
@@ -111,36 +151,185 @@ public class ChaosAltarScript extends Script {
         final GameObject gameObject = getChaosAltar();
         if (gameObject == null) return false;
 
-        final boolean reachable = Rs2GameObject.isReachable(gameObject);
-        log.info("Found Chaos Altar GameObject at: {}. Reachable={}", gameObject.getWorldLocation(), reachable);
+        boolean reachable = Rs2GameObject.isReachable(gameObject);
+        WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        //if distance from my player to altar is greater than 3 tiles, then it is not reachable 
+        int distanceToAltar = gameObject.getWorldLocation().distanceTo(playerLocation);
+        
+        // More strict check: must be reachable AND within 1 tile for accurate altar access
+        if (reachable && distanceToAltar <= 3) {
+            reachable = true;
+        } else {
+            reachable = false;
+        }
+        
+        log.info("Found Chaos Altar GameObject at: {}. Distance: {}, Reachable={}", 
+                gameObject.getWorldLocation(), distanceToAltar, reachable);
         return reachable;
+    }
+    
+    /**
+     * Check if player is near altar but potentially blocked by door or other obstacles
+     */
+    public boolean isNearChaosAltarArea() {
+        WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        return CHAOS_ALTAR_AREA.contains(playerLocation) || 
+               playerLocation.distanceTo(CHAOS_ALTAR_POINT) <= 1;
     }
 
 
     private void dieToNpc() {
         Microbot.log("Walking to dangerous NPC to die");
         Rs2Walker.walkTo(2979, 3845,0);
-        sleepUntil(() -> Rs2Npc.getNpc(CHAOS_FANATIC) != null, 60000);
+        sleepUntil(() -> Rs2Npc.getNpc("Chaos Fanatic") != null, 4000);
         // Attack chaos fanatic to die
         Rs2Npc.attack("Chaos Fanatic");
         // Wait until player dies
         sleepUntil(() -> Microbot.getClient().getBoostedSkillLevel(Skill.HITPOINTS) == 0, 60000);
         sleepUntil(() -> !Rs2Pvp.isInWilderness(), 15000);
-        sleep(1000,2000);
+        // Wait until respawn is complete and player can move
+        sleepUntil(() -> Microbot.getClient().getBoostedSkillLevel(Skill.HITPOINTS) > 0 && 
+                         !Rs2Player.isMoving() && 
+                         !Rs2Pvp.isInWilderness(), 5000);
+        didWeDie = true;
+        Microbot.log("Died to NPC, now walking to Lumbridge bank");
+        
+        // Walk to Lumbridge bank after death
+        walkToLumbridgeBank();
+        
+        // Disable world hopping when not in wilderness
+        if (config != null && config.enableWorldHopping()) {
+            ChaosAltarWorldHopManager.setHoppingEnabled(false);
+            Microbot.log("Left wilderness - world hopping disabled");
+        }
+    }
+    
+    private void walkToLumbridgeBank() {
+        Microbot.log("Walking to Lumbridge bank after death");
+        
+        // Walk to Lumbridge bank (closest bank after respawning)
+        if (!Rs2Bank.isNearBank(20)) {
+            Rs2Walker.walkTo(ChaosAltarScript.lumbridgeBank);
+            sleepUntil(() -> Rs2Bank.isNearBank(20), 30000);
+        }
+        
+        // Disable world hopping when not in wilderness
+        if (config != null && config.enableWorldHopping()) {
+            ChaosAltarWorldHopManager.setHoppingEnabled(false);
+            Microbot.log("Left wilderness - world hopping disabled");
+        }
+    }
+
+    private void walkToNearestBank() {
+        Microbot.log("Walking to nearest bank");
+        
+        // Use Rs2Bank utility to walk to the nearest available bank
+        if (!Rs2Bank.isNearBank(10)) {
+            boolean walkSuccess = Rs2Bank.walkToBank();
+            if (walkSuccess) {
+                sleepUntil(() -> Rs2Bank.isNearBank(10), 30000);
+            } else {
+                // Fallback to Lumbridge bank if nearest bank walking fails
+                Microbot.log("Failed to walk to nearest bank, falling back to Lumbridge bank");
+                Rs2Walker.walkTo(ChaosAltarScript.lumbridgeBank);
+                sleepUntil(() -> Rs2Bank.isNearBank(10), 30000);
+            }
+        }
+        
+        // Disable world hopping when not in wilderness
+        if (config != null && config.enableWorldHopping()) {
+            ChaosAltarWorldHopManager.setHoppingEnabled(false);
+            Microbot.log("Left wilderness - world hopping disabled");
+        }
     }
 
 
     private void teleportToWilderness() {
-
         // Enable protect item if needed
         if (!Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_ITEM)) {
             System.out.println("Enabling Protect Item");
             Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_ITEM, true);
-            sleep(500, 800);
+            // Optimized wait for prayer to activate - exits early when successful
+            sleepUntil(() -> Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_ITEM), 1500);
         }
 
         if (hasBurningAmulet()) {
-            walkTo(CHAOS_ALTAR_POINT_SOUTH);
+            // Use burning amulet to teleport to Lava Maze before walking to altar
+            Microbot.log("Using Burning Amulet to teleport to Lava Maze before going to Chaos Altar");
+            Rs2Equipment.interact("Burning amulet", "Lava Maze");
+            
+            // Handle wilderness warning dialog if it appears
+            sleepUntil(() -> {
+                // Check if wilderness warning dialog appears and handle it
+                if (Rs2Dialogue.hasSelectAnOption()) {
+                    // Try to find and click the teleport option
+                    if (Rs2Dialogue.hasDialogueOption("Okay, teleport")) {
+                        Microbot.log("Wilderness warning detected - selecting teleport option");
+                        Rs2Dialogue.clickOption("Okay, teleport");
+                        return false; // Continue waiting after clicking
+                    }
+                    // Fallback: if we can't find the exact text, click the first option (index 1)
+                    else if (Rs2Dialogue.hasDialogueOptionTitle("That's in level") || 
+                             Rs2Dialogue.hasDialogueOptionTitle("Wilderness")) {
+                        Microbot.log("Wilderness warning detected - selecting first option (teleport)");
+                        Rs2Dialogue.keyPressForDialogueOption(1); // First option is usually teleport
+                        return false; // Continue waiting after clicking
+                    }
+                }
+                // Check if teleport completed successfully
+                return Rs2Pvp.isInWilderness() && 
+                       Rs2Player.getWorldLocation().distanceTo(JewelleryLocationEnum.LAVA_MAZE.getLocation()) <= 10;
+            }, 10000);
+            
+            // If teleport was successful, walk first to south point then to the chaos altar
+            if (Rs2Pvp.isInWilderness()) {
+                Microbot.log("Successfully teleported to Lava Maze, now walking to south position first");
+                
+                // Enable world hopping now that we're in wilderness
+                if (config != null && config.enableWorldHopping()) {
+                    ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                    Microbot.log("Entered wilderness - world hopping enabled");
+                }
+                
+                // First walk to CHAOS_ALTAR_POINT_SOUTH
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT_SOUTH);
+                sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT_SOUTH) <= 5, 15000);
+                
+                // Then walk to the actual chaos altar
+                Microbot.log("Reached south position, now walking to Chaos Altar");
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
+            } else {
+                Microbot.log("Teleport failed, falling back to manual walk to altar");
+                // Fallback to walking if teleport failed - walk to south first then altar
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT_SOUTH);
+                sleepUntil(() -> Rs2Pvp.isInWilderness() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT_SOUTH) <= 5, 15000);
+                
+                // Enable world hopping when we finally enter wilderness
+                if (Rs2Pvp.isInWilderness() && config != null && config.enableWorldHopping()) {
+                    ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                    Microbot.log("Entered wilderness - world hopping enabled");
+                }
+                
+                // Then walk to the altar
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
+            }
+        } else {
+            Microbot.log("No burning amulet found, walking manually to Chaos Altar via south position");
+            // Fallback if no burning amulet - walk to south first then altar
+            Rs2Walker.walkTo(CHAOS_ALTAR_POINT_SOUTH);
+            sleepUntil(() -> Rs2Pvp.isInWilderness() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT_SOUTH) <= 5, 15000);
+
+            // Enable world hopping when we enter wilderness
+            if (Rs2Pvp.isInWilderness() && config != null && config.enableWorldHopping()) {
+                ChaosAltarWorldHopManager.setHoppingEnabled(true);
+                Microbot.log("Entered wilderness - world hopping enabled");
+            }
+            
+            // Then walk to the altar
+            Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+            sleepUntil(() -> isAtChaosAltar() || Rs2Player.getWorldLocation().distanceTo(CHAOS_ALTAR_POINT) <= 3, 15000);
         }
     }
 
@@ -148,12 +337,52 @@ public class ChaosAltarScript extends Script {
         return Rs2Inventory.getBones().stream()
                 .max(Comparator.comparingInt(Rs2ItemModel::getSlot)).orElse(null);
     }
+    
+    /**
+     * Bury all bones in inventory to save them when altar is unreachable during combat
+     */
+    private void buryAllBones() {
+        Microbot.log("Burying all bones to save them from PKers!");
+        
+        Rs2ItemModel bone;
+        while ((bone = getLastBone()) != null && isRunning()) {
+            int boneCountBefore = Rs2Inventory.getBones().size();
+            Rs2Inventory.interact(bone, "Bury");
+            
+            // Handle bone burying confirmation dialog if it appears
+            sleepUntil(() -> {
+                // Check if a confirmation dialog appears
+                if (Rs2Dialogue.isInDialogue() && Rs2Dialogue.hasSelectAnOption()) {
+                    String question = Rs2Dialogue.getQuestion();
+                    if (question != null && question.toLowerCase().contains("are you sure you want to do that")) {
+                        // Check if this is specifically about burying bones
+                        if (Rs2Dialogue.hasDialogueOption("Bury the bone")) {
+                            Microbot.log("Bone burying confirmation dialog detected - selecting 'Bury the bone'");
+                            Rs2Dialogue.clickOption("Bury the bone");
+                            sleep(100);
+                            return false; // Continue waiting after clicking
+                        }
+                    }
+                }
+                // Wait for bone to be buried (inventory count decreases or XP drop received)
+                return Rs2Inventory.getBones().size() < boneCountBefore || 
+                       Rs2Player.waitForXpDrop(Skill.PRAYER, 300);
+            }, 3000);
+            
+            // Brief pause between burials
+            sleep(Rs2Random.between(100, 300));
+        }
+        
+        Microbot.log("Finished burying all bones");
+    }
 
     private void offerBones() {
         System.out.println("Offering bones at altar- IN OFFERBONES1");
 
+        //if player is not in radius of chaos altar, walk to it using rs2walker
         if (!CHAOS_ALTAR_AREA.contains(Rs2Player.getWorldLocation())) {
-            if (Rs2Player.getWorldLocation().getY() > 3650) {
+            //if radius of the object chaos altar is greater than 5 tiles from the player
+            if (CHAOS_ALTAR_POINT.distanceTo(Rs2Player.getWorldLocation()) > 5) {
                 walkTo(CHAOS_ALTAR_POINT);
             }
         }
@@ -165,21 +394,45 @@ public class ChaosAltarScript extends Script {
 
         final Rs2ItemModel lastBones = getLastBone();
         if (lastBones != null && isRunning()) {
+            int initialBoneCount = Rs2Inventory.getBones().size();
             Rs2Inventory.interact(lastBones, "use");
-            sleep(300, 500);
+            // Wait for interaction to register
+            sleepUntil(() -> Rs2Player.isAnimating() || Rs2Player.isMoving(), 600);
             Rs2GameObject.interact(CHAOS_ALTAR);
-            sleep(300, 500);
+            // Wait for bone offering animation or inventory change
+            sleepUntil(() -> Rs2Inventory.getBones().size() < initialBoneCount || 
+                            Rs2Player.waitForXpDrop(Skill.PRAYER, 600), 1500);
 
             Rs2Inventory.waitForInventoryChanges(Rs2Random.between(500,2000));
         }
     }
 
     private void offerBonesFast() {
-        Microbot.log("Offering bones at altar - IN OFFERBONES");
+        Microbot.log("Offering bones at altar - IN OFFERBONES FAST");
 
-        if (!CHAOS_ALTAR_AREA.contains(Rs2Player.getWorldLocation())) {
-            if (Rs2Player.getWorldLocation().getY() > 3650) {walkTo(
-                    CHAOS_ALTAR_POINT);
+        // If under attack and near altar, prioritize offering over positioning
+        if (Rs2Player.isInCombat()) {
+            if (!isAtChaosAltar() && isNearChaosAltarArea()) {
+                // Try quick walk to altar
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar(), 1500);
+            }
+            
+            if (!isAtChaosAltar()) {
+                // Can't reach altar while in combat, bury bones to save them
+                buryAllBones();
+                return;
+            }
+        }
+
+        // Check if we're actually at the altar before offering
+        if (!isAtChaosAltar()) {
+            if (isNearChaosAltarArea()) {
+                Rs2Walker.walkTo(CHAOS_ALTAR_POINT);
+                sleepUntil(() -> isAtChaosAltar(), 3000);
+            } else {
+                walkTo(CHAOS_ALTAR_POINT);
+                return;
             }
         }
 
@@ -187,14 +440,31 @@ public class ChaosAltarScript extends Script {
         while ((lastBones = getLastBone()) != null
                 && isRunning()
                 && !Rs2Player.isInCombat()
-                && Rs2GameObject.exists(CHAOS_ALTAR)) {
+                && Rs2GameObject.exists(CHAOS_ALTAR)
+                && isAtChaosAltar()) { // Ensure we stay at altar
+            int boneCountBefore = Rs2Inventory.getBones().size();
             Rs2Inventory.interact(lastBones, "use");
-            sleep(100, 300);
+            // Very short wait for interaction to register
+            sleepUntil(() -> Rs2Player.isAnimating(), 150);
             Rs2GameObject.interact(CHAOS_ALTAR);
             Rs2Player.waitForXpDrop(Skill.PRAYER);
 
-            // Small random delay between offerings
-            sleep(100, 200);
+            // Brief pause between offerings for natural timing
+            sleepUntil(() -> Rs2Inventory.getBones().size() < boneCountBefore || 
+                            !Rs2GameObject.exists(CHAOS_ALTAR), 200);
+        }
+        
+        // If we have bones left and in combat, try to save them
+        if (Rs2Player.isInCombat() && getLastBone() != null) {
+            if (isAtChaosAltar()) {
+                // Continue offering if still at altar
+                Microbot.log("Still at altar during combat - continuing to offer bones");
+                // Continue the loop by calling recursively (but limit recursion)
+                offerBonesFast();
+            } else {
+                // No longer at altar and in combat, bury remaining bones
+                buryAllBones();
+            }
         }
     }
 
@@ -205,6 +475,8 @@ public class ChaosAltarScript extends Script {
 
         if (!Rs2Bank.isOpen()) {
             log.info("Opening bank");
+            Rs2Walker.walkTo(ChaosAltarScript.lumbridgeBank);
+            sleepUntil(() -> Rs2Bank.isNearBank(20), 30000);
             if (!Rs2Bank.walkToBankAndUseBank()) {
                 log.error("Failed to walk to or use bank");
                 return;
@@ -214,7 +486,7 @@ public class ChaosAltarScript extends Script {
         log.info("Depositing All");
         Rs2Bank.depositAll();
 
-        if(!Rs2Bank.hasItem(DRAGON_BONES)) {
+        if(!Rs2Bank.hasItem("Dragon bones")) {
             Microbot.log("NO BONES, SHUTTING DOWN");
             shutdown();
             return;
@@ -228,16 +500,17 @@ public class ChaosAltarScript extends Script {
 
         // If amulet not equipped or in inventory
         if (!hasBurningAmulet()) {
-            sleep(400);
+            // Wait for bank interface to be ready
+            sleepUntil(() -> Rs2Bank.isOpen(), 1000);
             Microbot.log("Withdrawing burning amulet");
             Rs2Bank.withdrawAndEquip("burning amulet");
             Rs2Inventory.waitForInventoryChanges(2000);
         }
 
         // If no bones in inventory, withdraw 28
-        if (!Rs2Inventory.contains(DRAGON_BONES)) {
+        if (!Rs2Inventory.contains("Dragon bones")) {
             log.info("Withdrawing bones");
-            Rs2Bank.withdrawAll(DRAGON_BONES);
+            Rs2Bank.withdrawAll("Dragon bones");
             Rs2Inventory.waitForInventoryChanges(2000);
         }
 
@@ -252,30 +525,92 @@ public class ChaosAltarScript extends Script {
     }
 
     private State determineState() {
+        // Handle chatbox dialogues first (like burning amulet confirmation)
+        if (Rs2Dialogue.isInDialogue()) {
+            if (Rs2Dialogue.hasSelectAnOption()) {
+                // Check for burning amulet warning and select option 1 (top option)
+                String question = Rs2Dialogue.getQuestion();
+                if (question != null && question.toLowerCase().contains("are you sure you want to teleport")) {
+                    Microbot.log("Burning amulet confirmation dialog detected - selecting option 1 (Yes)");
+                    Rs2Dialogue.keyPressForDialogueOption(1);
+                    sleep(600);
+                    return State.TELEPORT_TO_WILDERNESS; // Continue with teleportation
+                }
+                // For any other dialogue options, try to handle them appropriately
+                else {
+                    Rs2Dialogue.keyPressForDialogueOption(1); // Default to option 1
+                    sleep(600);
+                }
+            } else if (Rs2Dialogue.hasContinue()) {
+                Rs2Dialogue.clickContinue();
+                sleep(600);
+            }
+            return currentState; // Stay in current state while handling dialogue
+        }
+        
         final int boneCount = Rs2Inventory.getBones().size();
         final boolean inWilderness = Rs2Pvp.isInWilderness();
-        final boolean hasBones = boneCount > 4;
+        final boolean hasBones = boneCount >= 1;
         final boolean hasAnyBones = boneCount > 0;
         final boolean atAltar = isAtChaosAltar();
 
         if(didWeDie){
             didWeDie = false;
-            Microbot.log("We died! Going to the bank...");
-            return State.BANK;
+            Microbot.log("We died! Walking to Lumbridge bank...");
+            return State.WALK_TO_BANK;
         }
         if (!inWilderness && !hasBones) {
-            return State.BANK;
+            // Smart banking logic: if in Lumbridge area, go to Lumbridge bank, otherwise nearest bank
+            WorldPoint currentLocation = Rs2Player.getWorldLocation();
+            WorldPoint lumbridgeCastle = new WorldPoint(3208, 3218, 0);
+            
+            // Check if player is in Lumbridge area (within reasonable distance of castle)
+            boolean isInLumbridgeArea = currentLocation.distanceTo(lumbridgeCastle) <= 20;
+            
+            if (isInLumbridgeArea) {
+                // If near Lumbridge castle, use Lumbridge bank
+                if (currentLocation.distanceTo(lumbridgeCastle) <= 20) {
+                    Microbot.log("In Lumbridge area and near castle - going to Lumbridge bank");
+                    return State.BANK;
+                } else {
+                    // In Lumbridge area but not near castle - walk to nearest bank
+                    Microbot.log("In Lumbridge area but not near castle - walking to nearest bank");
+                    return State.WALK_TO_NEAREST_BANK;
+                }
+            } else {
+                // Not in Lumbridge area - use nearest bank
+                Microbot.log("Not in Lumbridge area - going to nearest available bank");
+                return State.WALK_TO_NEAREST_BANK;
+            }
         }
         if (!inWilderness && hasBones) {
             return State.TELEPORT_TO_WILDERNESS;
         }
-        if (inWilderness && hasAnyBones && !atAltar) {
-            return State.WALK_TO_ALTAR;
-        }
         if (inWilderness && hasAnyBones && atAltar) {
+            // At altar and have bones - offer them
             return State.OFFER_BONES;
         }
+        if (inWilderness && hasAnyBones && !atAltar) {
+            // Have bones but not at altar - walk to altar
+            return State.WALK_TO_ALTAR;
+        }
         if (inWilderness && !hasAnyBones) {
+            // Turn off world hopping when we have no bones in wilderness to allow other players to attack us for faster death
+            if (config != null && config.enableWorldHopping()) {
+                ChaosAltarWorldHopManager.setHoppingEnabled(false);
+                Microbot.log("No bones in wilderness - turning off world hopping to allow PK attacks for faster death");
+            }
+            
+            // Check if we're stuck after world hop - if player is not moving and far from Chaos Fanatic
+            WorldPoint chaosFantasticLocation = new WorldPoint(2979, 3845, 0);
+            WorldPoint currentLocation = Rs2Player.getWorldLocation();
+            
+            // If we're in wilderness with no bones but far from Chaos Fanatic and not moving, walk there
+            if (currentLocation.distanceTo(chaosFantasticLocation) > 5 && !Rs2Player.isMoving()) {
+                Microbot.log("No bones in wilderness and far from Chaos Fanatic after potential world hop - walking to die");
+                Rs2Walker.walkTo(chaosFantasticLocation);
+            }
+            
             return State.DIE_TO_NPC;
         }
 
@@ -284,7 +619,10 @@ public class ChaosAltarScript extends Script {
 
     @Override
     public void shutdown() {
-        autoRetaliate = false;
+        Rs2Combat.setAutoRetaliate(originalAutoRetaliateState);
+        Microbot.log("Chaos Altar script shutting down - restoring original auto-retaliate state to: " + originalAutoRetaliateState);
+        // Stop the threaded monitoring system
+        ChaosAltarWorldHopManager.stopThreadedMonitoring();
         super.shutdown();
     }
 }

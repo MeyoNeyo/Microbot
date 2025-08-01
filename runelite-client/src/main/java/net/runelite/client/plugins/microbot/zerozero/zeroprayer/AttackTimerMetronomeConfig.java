@@ -53,6 +53,59 @@ public interface AttackTimerMetronomeConfig extends Config
 		return true;
 	}
 
+	@ConfigSection(
+			name = "Defensive Prayer Settings",
+			description = "Settings for automatic defensive prayers",
+			position = 2
+	)
+	String DefensivePrayerSettings = "Defensive Prayer Settings";
 
+	@ConfigItem(
+			position = 3,
+			keyName = "enableDefensivePrayers",
+			name = "Enable Defensive Prayers",
+			description = "Automatically activate defensive prayers based on enemy attacks",
+			section = DefensivePrayerSettings
+	)
+	default boolean enableDefensivePrayers()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			position = 4,
+			keyName = "enablePvpMode",
+			name = "Enable PvP Mode",
+			description = "Enhanced defensive prayer switching for PvP combat",
+			section = DefensivePrayerSettings
+	)
+	default boolean enablePvpMode()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			position = 5,
+			keyName = "enablePredictiveDefense",
+			name = "Enable Predictive Defense",
+			description = "Use pattern analysis to predict enemy attacks (experimental)",
+			section = DefensivePrayerSettings
+	)
+	default boolean enablePredictiveDefense()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			position = 6,
+			keyName = "defensivePrayerDelay",
+			name = "Defensive Prayer Delay (ticks)",
+			description = "Number of ticks to keep defensive prayer active after attack",
+			section = DefensivePrayerSettings
+	)
+	default int defensivePrayerDelay()
+	{
+		return 3;
+	}
 
 }

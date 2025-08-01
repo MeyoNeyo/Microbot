@@ -29,6 +29,35 @@ public class ChaosAltarOverlay extends OverlayPanel {
                     .build());
         }
 
+        // World hopping status
+        if (ChaosAltarWorldHopManager.isCurrentlyHopping()) {
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Status:")
+                    .right("Hopping worlds...")
+                    .rightColor(Color.YELLOW)
+                    .build());
+        } else {
+            // Show player detection info
+            int trackedPlayers = ChaosAltarWorldHopManager.getTrackedPlayerCount();
+            if (trackedPlayers > 0) {
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left("Players detected:")
+                        .right(String.valueOf(trackedPlayers))
+                        .rightColor(Color.RED)
+                        .build());
+            }
+
+            // Show time since last hop
+            long timeSinceHop = ChaosAltarWorldHopManager.getTimeSinceLastHop();
+            if (timeSinceHop < 30000) { // Show for 30 seconds after hop
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left("Last hop:")
+                        .right(String.format("%.1fs ago", timeSinceHop / 1000.0))
+                        .rightColor(Color.GREEN)
+                        .build());
+            }
+        }
+
         return panelComponent.render(graphics);
     }
 }

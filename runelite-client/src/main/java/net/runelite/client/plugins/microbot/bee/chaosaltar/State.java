@@ -7,6 +7,7 @@ public enum State {
         WALK_TO_ALTAR,
         OFFER_BONES,
         DIE_TO_NPC,
-        WALK_TO_BANK
+        WALK_TO_BANK,
+        WALK_TO_NEAREST_BANK
 
 }

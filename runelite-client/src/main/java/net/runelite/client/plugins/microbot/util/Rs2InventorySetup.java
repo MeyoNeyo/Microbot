@@ -10,7 +10,6 @@ import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -186,6 +185,10 @@ public class Rs2InventorySetup {
 		String itemName = setupItem.getName().toLowerCase();
 		boolean isFuzzy = setupItem.isFuzzy();
 
+		// Check stackability from bank item instead of inventory item (inventory may be empty after deposit)
+		Rs2ItemModel bankItem = isFuzzy ? Rs2Bank.getBankItem(itemName, false) : Rs2Bank.getBankItem(itemId);
+		boolean isStackable = bankItem != null && bankItem.isStackable();
+
 		int desiredQuantity = setupItems.stream()
 			.mapToInt(InventorySetupsItem::getQuantity)
 			.sum();
@@ -198,9 +201,8 @@ public class Rs2InventorySetup {
 			return 0;
 		}
 
-		boolean isStackable = (setupItems.size() == 1) && (desiredQuantity > 1);
-
-		if (!isStackable) {
+		// Use the stackability check from bank item, but also consider if we have multiple of the same item in setup
+		if (!isStackable || setupItems.size() > 1) {
 			long alreadyPresent = isFuzzy
 				? Rs2Inventory.items(i -> i.getName().toLowerCase().contains(itemName)).count()
 				: Rs2Inventory.items(i -> i.getId() == itemId).count();
@@ -222,19 +224,14 @@ public class Rs2InventorySetup {
 		boolean useName = item.isFuzzy();
 		Object identifier = useName ? item.getName().toLowerCase() : item.getId();
 
-		if (quantity > 1) {
-			if (useName) {
-				Rs2Bank.withdrawX((String) identifier, quantity);
-			} else {
-				Rs2Bank.withdrawX((int) identifier, quantity);
-			}
+		// Always use withdrawX to respect the exact quantity, regardless of whether it's 1 or more
+		// This is crucial for stackable items where we might want exactly X amount
+		if (useName) {
+			Rs2Bank.withdrawX((String) identifier, quantity);
 		} else {
-			if (useName) {
-				Rs2Bank.withdrawItem((String) identifier);
-			} else {
-				Rs2Bank.withdrawItem((int) identifier);
-			}
+			Rs2Bank.withdrawX((int) identifier, quantity);
 		}
+		
 		// Using wait for inventory changes here makes sure the inventory is updated more reliably to avoid withdrawing excess items.
 		Rs2Inventory.waitForInventoryChanges(5000);
     }
@@ -278,8 +275,6 @@ public class Rs2InventorySetup {
 		for (InventorySetupsItem item : inventorySetup.getEquipment()) {
 			if (isMainSchedulerCancelled()) break;
 			if (InventorySetupsItem.itemIsDummy(item)) continue;
-
-			String lowerCaseName = item.getName().toLowerCase();
 
 			boolean isFuzzy = item.isFuzzy();
 			Object identifier = isFuzzy ? item.getName().toLowerCase() : item.getId();
@@ -395,7 +390,7 @@ public class Rs2InventorySetup {
 						continue;
 					}
 
-					if (invItem.getQuantity() < setupItem.getQuantity()) {
+					if (invItem != null && invItem.getQuantity() < setupItem.getQuantity()) {
 						Microbot.log("Wrong quantity in slot " + expectedSlot + " for " + setupItem.getName(), Level.WARN);
 						found = false;
 					}
