@@ -66,14 +66,26 @@ public class AIOMetalWorkerPlugin extends Plugin {
     protected void startUp() throws AWTException {
         log.info("AIO Metal Worker Plugin starting up...");
         
-        if (overlayManager != null) {
-            overlayManager.add(overlay);
+        try {
+            if (overlayManager != null) {
+                overlayManager.add(overlay);
+            }
+            
+            // Ensure script is initialized properly
+            if (script != null) {
+                log.info("Starting AIO Metal Worker script...");
+                script.run(config);
+            } else {
+                log.error("Script injection failed - plugin cannot start");
+                return;
+            }
+            
+            log.info("AIO Metal Worker Plugin started successfully");
+            
+        } catch (Exception e) {
+            log.error("Failed to start AIO Metal Worker Plugin: " + e.getMessage(), e);
+            throw e;
         }
-        
-        // Start the main script
-        script.run(config);
-        
-        log.info("AIO Metal Worker Plugin started successfully");
     }
 
     /**
@@ -83,15 +95,24 @@ public class AIOMetalWorkerPlugin extends Plugin {
     protected void shutDown() {
         log.info("AIO Metal Worker Plugin shutting down...");
         
-        // Stop the script
-        script.shutdown();
-        
-        // Remove overlay
-        if (overlayManager != null) {
-            overlayManager.remove(overlay);
+        try {
+            // Stop the script first
+            if (script != null) {
+                script.shutdown();
+                // Give the script time to stop gracefully
+                Thread.sleep(1000);
+            }
+            
+            // Remove overlay
+            if (overlayManager != null) {
+                overlayManager.remove(overlay);
+            }
+            
+            log.info("AIO Metal Worker Plugin stopped successfully");
+            
+        } catch (Exception e) {
+            log.error("Error during plugin shutdown: " + e.getMessage(), e);
         }
-        
-        log.info("AIO Metal Worker Plugin stopped successfully");
     }
 
     /**

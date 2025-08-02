@@ -9,9 +9,9 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.allinonemetalworker.enums.ProcessPhase;
 import net.runelite.client.plugins.microbot.allinonemetalworker.enums.SmithingProduct;
-import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -58,7 +58,6 @@ public class AIOMetalWorkerScript extends Script {
     private static final WorldPoint AL_KHARID_BANK = new WorldPoint(3269, 3167, 0);
     
     // State tracking
-    private boolean shouldStop = false;
     private int failedActionCount = 0;
 
     public AIOMetalWorkerScript() {
@@ -87,36 +86,49 @@ public class AIOMetalWorkerScript extends Script {
                 configureAntiban();
             }
             
-            // Main execution loop
-            while (!shouldStop && super.run()) {
+            // Use proper Microbot scheduling to prevent client freezing
+            mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
                 try {
-                    executeCurrentPhase();
+                    if (!super.run() || !Microbot.isLoggedIn()) {
+                        return;
+                    }
                     
-                    // Check completion conditions
+                    // Check completion conditions first
                     if (isTaskComplete()) {
                         currentPhase = ProcessPhase.COMPLETE;
                         Microbot.log("Task completed successfully!");
-                        shouldStop = true;
-                        break;
+                        shutdown();
+                        return;
                     }
                     
-                    // Anti-ban sleep
-                    if (config.enableAntiban()) {
-                        Rs2Antiban.actionCooldown();
-                    } else {
-                        sleep(config.actionDelay(), config.actionDelay() + 100);
+                    // Check runtime limit
+                    if (config.maxRunTimeMinutes() > 0) {
+                        long runtime = (System.currentTimeMillis() - progress.getStartTime().toEpochMilli()) / 60000;
+                        if (runtime >= config.maxRunTimeMinutes()) {
+                            updateStatus("Runtime limit reached, stopping...");
+                            shutdown();
+                            return;
+                        }
                     }
+                    
+                    // Update progress status every few cycles (for overlay updates)
+                    if (System.currentTimeMillis() % 5000 < 1200) { // Roughly every 5 seconds
+                        updateProgressStatus();
+                    }
+                    
+                    executeCurrentPhase();
                     
                 } catch (Exception e) {
                     handleError("Error in main execution loop", e);
                 }
-            }
+            }, 0, 1200, java.util.concurrent.TimeUnit.MILLISECONDS);
+            
+            return true;
             
         } catch (Exception e) {
             handleError("Critical error in script execution", e);
+            return false;
         }
-        
-        return false;
     }
 
     /**
@@ -156,48 +168,50 @@ public class AIOMetalWorkerScript extends Script {
     private void executeMiningPhase() {
         updateStatus("Mining " + config.metalType().getDisplayName() + " ore");
         
-        // Auto-detect current mining area if not set
-        if (currentMiningArea == null) {
-            currentMiningArea = detectCurrentMiningArea();
-        }
+        // First priority: Check if we've reached the target mining quantity
+        int totalOresMined = progress.getOresMined();
+        int targetQuantity = config.targetQuantity();
         
-        // Check if we're near a suitable mining area
-        if (currentMiningArea == null || !isNearMiningArea()) {
-            // Try to find nearby ores instead of walking to hardcoded location
-            if (!hasNearbyOres()) {
-                handleError("No suitable mining area found nearby. Please move to a mining location with " + 
-                          config.metalType().getDisplayName() + " ores.");
-                currentPhase = ProcessPhase.ERROR;
-                return;
-            }
+        if (totalOresMined >= targetQuantity) {
+            updateStatus("Target mining quantity reached! Ores mined: " + totalOresMined + "/" + targetQuantity);
+            currentPhase = ProcessPhase.BANKING; // Go to bank to proceed to next phase
+            return;
         }
         
         // Check if inventory is full
         if (Rs2Inventory.isFull()) {
+            updateStatus("Inventory full - going to bank to deposit ores");
             currentPhase = ProcessPhase.BANKING;
             return;
         }
         
         // Ensure we have a pickaxe
         if (!hasPickaxe()) {
-            handleError("No pickaxe found in inventory or equipped");
-            currentPhase = ProcessPhase.BANKING; // Try to get pickaxe from bank
+            updateStatus("No pickaxe found - going to bank");
+            currentPhase = ProcessPhase.BANKING;
             return;
         }
         
-        // Smart ore mining based on metal type requirements
-        if (mineRequiredOres()) {
-            // Successfully mining, wait for animation
-            Rs2Player.waitForAnimation();
-        } else {
-            // No ore found or failed to start mining, search for alternative spots
+        // Set current mining area based on player location if not set
+        if (currentMiningArea == null) {
+            currentMiningArea = detectCurrentMiningArea();
+        }
+        
+        // Check if player is near the current mining area
+        if (!isNearMiningArea()) {
+            updateStatus("Moving to mining area...");
+            currentPhase = ProcessPhase.WALKING;
+            return;
+        }
+        
+        // Try to mine nearby ores based on current location
+        if (!findAndMineNearbyOres()) {
+            updateStatus("No " + config.metalType().getDisplayName() + " ores found nearby");
+            // Search for alternative ore spots
             searchForAlternativeOres();
         }
         
-        // Anti-ban random mouse movement
-        if (config.enableAntiban() && Math.random() < 0.05) {
-            Rs2Antiban.moveMouseRandomly();
-        }
+        sleep(600, 1000); // Brief pause between mining attempts
     }
     
     /**
@@ -206,20 +220,51 @@ public class AIOMetalWorkerScript extends Script {
     private WorldPoint detectCurrentMiningArea() {
         WorldPoint playerLocation = Rs2Player.getWorldLocation();
         
-        // Check if we're near any known mining areas
+        // First check if we're near any known mining areas
         if (playerLocation.distanceTo(LUMBRIDGE_MINING_AREA) <= MINING_RADIUS) {
+            updateStatus("Detected location: Lumbridge mining area");
             return LUMBRIDGE_MINING_AREA;
         }
         if (playerLocation.distanceTo(AL_KHARID_MINING_AREA) <= MINING_RADIUS) {
+            updateStatus("Detected location: Al Kharid mining area");
             return AL_KHARID_MINING_AREA;
         }
         
         // If not near known areas, check if there are suitable ores nearby
         if (hasNearbyOres()) {
+            updateStatus("Detected ores near current location - using as mining area");
             return playerLocation; // Use current location as mining area
         }
         
-        return null;
+        // Default to closest known mining area if no ores detected
+        updateStatus("No ores detected nearby - will use closest mining area");
+        return getClosestMiningArea(playerLocation);
+    }
+    
+    /**
+     * Gets the closest known mining area to the player
+     */
+    private WorldPoint getClosestMiningArea(WorldPoint playerLocation) {
+        WorldPoint[] knownAreas = {
+            LUMBRIDGE_MINING_AREA,
+            AL_KHARID_MINING_AREA,
+            new WorldPoint(3183, 3376, 0), // Varrock East mine
+            new WorldPoint(3146, 3149, 0), // Lumbridge Swamp East mine
+            new WorldPoint(3289, 3365, 0)  // Al Kharid mine north
+        };
+        
+        WorldPoint closest = knownAreas[0];
+        int shortestDistance = playerLocation.distanceTo(closest);
+        
+        for (WorldPoint area : knownAreas) {
+            int distance = playerLocation.distanceTo(area);
+            if (distance < shortestDistance) {
+                shortestDistance = distance;
+                closest = area;
+            }
+        }
+        
+        return closest;
     }
     
     /**
@@ -235,44 +280,27 @@ public class AIOMetalWorkerScript extends Script {
      */
     private boolean hasNearbyOres() {
         String[] oreNames = config.metalType().getOreNames();
+        
         for (String oreName : oreNames) {
-            if (Rs2GameObject.findObject(oreName, false, 15, false, Rs2Player.getWorldLocation()) != null) {
+            if (Rs2GameObject.getTileObject(oreName) != null) {
+                updateStatus("Found " + oreName + " nearby");
                 return true;
             }
         }
+        
+        // Also check for common ore rock names that might contain the ores
+        String[] genericRockNames = {"Rock", "Rocks", "Mining rocks", "Tin rocks", "Copper rocks", "Iron rocks", "Coal rocks"};
+        for (String rockName : genericRockNames) {
+            if (Rs2GameObject.getTileObject(rockName) != null) {
+                updateStatus("Found mining rocks nearby - will attempt to mine");
+                return true;
+            }
+        }
+        
         return false;
     }
     
-    /**
-     * Intelligently mines ores based on metal type requirements and current inventory ratios
-     */
-    private boolean mineRequiredOres() {
-        // Get current ore counts in inventory
-        Map<String, Integer> currentOres = getCurrentOreInventory();
-        
-        // Determine which ore to prioritize based on requirements
-        String[] oreNames = config.metalType().getOreNames();
-        
-        for (String oreName : oreNames) {
-            // Check if we need more of this ore type based on required ratios
-            if (needsMoreOre(oreName, currentOres)) {
-                if (Rs2GameObject.interact(oreName, "Mine")) {
-                    updateStatus("Mining " + oreName + "...");
-                    return true;
-                }
-            }
-        }
-        
-        // If no specific ore needed, mine any available ore for this metal type
-        for (String oreName : oreNames) {
-            if (Rs2GameObject.interact(oreName, "Mine")) {
-                updateStatus("Mining " + oreName + "...");
-                return true;
-            }
-        }
-        
-        return false;
-    }
+
     
     /**
      * Gets current ore inventory counts for the metal type
@@ -364,24 +392,30 @@ public class AIOMetalWorkerScript extends Script {
     private void executeBankingPhase() {
         updateStatus("Banking items");
         
-        // Walk to nearest bank based on current location
-        WorldPoint bankLocation = getNearestBank();
-        if (!Rs2Bank.isOpen() && Rs2Player.getWorldLocation().distanceTo(bankLocation) > 5) {
-            currentPhase = ProcessPhase.WALKING;
-            return;
-        }
-        
-        // Open bank
-        if (!Rs2Bank.isOpen()) {
-            if (!Rs2Bank.openBank()) {
-                sleep(1000, 2000);
-                return;
+        try {
+            // Simple approach: use Rs2Bank.walkToBankAndUseBank() directly
+            updateStatus("Walking to nearest bank and opening...");
+            
+            if (!Rs2Bank.isOpen()) {
+                boolean bankingSuccess = Rs2Bank.walkToBankAndUseBank();
+                if (!bankingSuccess) {
+                    updateStatus("Failed to reach and open bank - retrying...");
+                    sleep(3000, 5000);
+                    return;
+                }
             }
-        }
-        
-        // Banking logic based on current needs
-        if (currentPhase == ProcessPhase.BANKING) {
-            handleBankingOperations();
+            
+            if (Rs2Bank.isOpen()) {
+                updateStatus("Bank is open - handling banking operations");
+                handleBankingOperations();
+                sleep(1000, 1500); // Pause after banking operations
+            } else {
+                updateStatus("Bank not open after walking - retrying...");
+                sleep(2000, 3000);
+            }
+            
+        } catch (Exception e) {
+            handleError("Banking phase failed: " + e.getMessage());
         }
     }
 
@@ -468,15 +502,65 @@ public class AIOMetalWorkerScript extends Script {
         if (destination != null) {
             updateStatus("Walking to " + getLocationName(destination));
             
-            if (Rs2Walker.walkTo(destination)) {
-                // Wait for arrival
-                Rs2Player.waitForWalking();
+            // Check if already close to destination
+            if (Rs2Player.getWorldLocation().distanceTo(destination) <= 3) {
+                updatePhaseAfterWalking(destination);
+                return;
+            }
+            
+            // Use proper walking with retry logic
+            boolean walkingStarted = false;
+            int retryCount = 0;
+            int maxRetries = 3;
+            
+            while (!walkingStarted && retryCount < maxRetries) {
+                if (Rs2Walker.walkTo(destination)) {
+                    walkingStarted = true;
+                    updateStatus("Walking started to " + getLocationName(destination));
+                } else {
+                    retryCount++;
+                    updateStatus("Walk attempt " + retryCount + " failed, retrying...");
+                    sleep(1000, 2000);
+                }
+            }
+            
+            if (walkingStarted) {
+                // Wait for walking to start
+                sleep(1000, 1500);
+                
+                // Wait for arrival with timeout
+                int waitTime = 0;
+                while (Rs2Player.isMoving() && waitTime < 30000) {
+                    sleep(500, 800);
+                    waitTime += 600;
+                }
                 
                 // Update phase based on destination
                 updatePhaseAfterWalking(destination);
+            } else {
+                handleError("Failed to start walking after " + maxRetries + " attempts");
+                
+                // Emergency fallback - if we're supposed to be banking, switch directly to banking
+                if (currentPhase == ProcessPhase.WALKING && Rs2Inventory.isFull()) {
+                    updateStatus("Emergency fallback - switching directly to banking");
+                    currentPhase = ProcessPhase.BANKING;
+                    return;
+                }
+                
+                sleep(3000, 5000);
             }
         } else {
-            handleError("Unable to determine walking destination");
+            updateStatus("No walking destination needed - continuing with current phase");
+            // If destination is null, continue with previous phase logic
+            switch (currentPhase) {
+                case WALKING:
+                    // If we were walking but no destination, go back to mining
+                    currentPhase = ProcessPhase.MINING;
+                    break;
+                default:
+                    // For other phases, the logic will be handled in the next cycle
+                    break;
+            }
         }
     }
 
@@ -484,35 +568,177 @@ public class AIOMetalWorkerScript extends Script {
      * Error handling phase
      */
     private void handleErrorPhase() {
-        updateStatus("Handling error state");
+        updateStatus("Handling error state - attempt " + (failedActionCount + 1));
         
         failedActionCount++;
         if (failedActionCount >= config.maxFailedActions()) {
-            Microbot.log("Too many failed actions, stopping script");
-            shouldStop = true;
+            Microbot.log("Too many failed actions (" + failedActionCount + "), stopping script");
+            shutdown();
             return;
         }
         
-        // Try to recover
-        if (Rs2Bank.isOpen()) {
-            Rs2Bank.closeBank();
+        // Try to recover by closing interfaces and resetting state
+        try {
+            if (Rs2Bank.isOpen()) {
+                Rs2Bank.closeBank();
+                sleep(1000, 1500);
+            }
+            
+            // Close any open interfaces
+            Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
+            sleep(500, 800);
+            
+            // Reset to a safe state
+            currentPhase = ProcessPhase.MINING;
+            updateStatus("Recovered from error, resuming mining...");
+            
+        } catch (Exception e) {
+            Microbot.log("Error during recovery: " + e.getMessage());
         }
         
-        // Reset to mining phase and try again
-        currentPhase = ProcessPhase.MINING;
-        sleep(2000, 4000);
+        // Longer sleep on errors to prevent spam
+        sleep(5000, 8000);
     }
 
     // Helper Methods
 
     /**
-     * Checks if the task is complete
+     * Finds and mines nearby ores based on current player location
+     * @return true if started mining, false if no ores found
      */
-    private boolean isTaskComplete() {
-        return progress.getOresMined() >= config.targetQuantity() && 
-               (!config.smeltBars() || progress.getBarsSmelted() >= getRequiredBars()) &&
-               (!config.smithItems() || progress.getItemsSmithed() >= getRequiredItems());
+    private boolean findAndMineNearbyOres() {
+        String[] oreNames = config.metalType().getOreNames();
+        int searchRadius = config.miningRange();
+        
+        // Get current ore counts for smart mining
+        Map<String, Integer> currentOres = getCurrentOreInventory();
+        
+        updateStatus("Searching for ores within " + searchRadius + " tiles...");
+        
+        // Store initial inventory count to detect successful mining
+        int initialInventoryCount = Rs2Inventory.count();
+        
+        // First priority: mine ores we need more of based on metal type ratios
+        for (String oreName : oreNames) {
+            if (needsMoreOre(oreName, currentOres)) {
+                // Try exact ore name first
+                if (Rs2GameObject.interact(oreName, "Mine")) {
+                    updateStatus("Mining " + oreName + " (priority - need more)");
+                    if (waitForMiningSuccess(initialInventoryCount)) {
+                        return true;
+                    }
+                }
+                
+                // Try variations of ore names
+                String[] variations = getOreNameVariations(oreName);
+                for (String variation : variations) {
+                    if (Rs2GameObject.interact(variation, "Mine")) {
+                        updateStatus("Mining " + variation + " (priority)");
+                        if (waitForMiningSuccess(initialInventoryCount)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Second priority: mine any available ore for this metal type
+        for (String oreName : oreNames) {
+            // Try exact ore name
+            if (Rs2GameObject.interact(oreName, "Mine")) {
+                updateStatus("Mining " + oreName);
+                if (waitForMiningSuccess(initialInventoryCount)) {
+                    return true;
+                }
+            }
+            
+            // Try variations
+            String[] variations = getOreNameVariations(oreName);
+            for (String variation : variations) {
+                if (Rs2GameObject.interact(variation, "Mine")) {
+                    updateStatus("Mining " + variation);
+                    if (waitForMiningSuccess(initialInventoryCount)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Last resort: try generic rock names that might contain our ores
+        String[] genericRocks = {"Rocks", "Rock", "Mining rocks"};
+        for (String rockName : genericRocks) {
+            if (Rs2GameObject.interact(rockName, "Mine")) {
+                updateStatus("Mining " + rockName + " (generic)");
+                if (waitForMiningSuccess(initialInventoryCount)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
+    
+    /**
+     * Waits for mining to complete and detects if it was successful
+     * @param initialInventoryCount The inventory count before mining started
+     * @return true if mining was successful (inventory increased), false otherwise
+     */
+    private boolean waitForMiningSuccess(int initialInventoryCount) {
+        Rs2Player.waitForAnimation(3000);
+        
+        // Wait up to 10 seconds for inventory to change
+        int waitTime = 0;
+        int maxWaitTime = 10000; // 10 seconds max wait
+        
+        while (waitTime < maxWaitTime) {
+            // Check if inventory count increased (ore was mined)
+            if (Rs2Inventory.count() > initialInventoryCount) {
+                onMiningSuccess();
+                updateStatus("Successfully mined ore! Total ores: " + progress.getOresMined() + "/" + config.targetQuantity());
+                return true;
+            }
+            
+            // Check if player is still animating/mining
+            if (!Rs2Player.isAnimating() && !Rs2Player.isMoving() && waitTime > 2000) {
+                // Mining animation finished but no ore gained - mining failed
+                updateStatus("Mining attempt completed but no ore gained");
+                return false;
+            }
+            
+            sleep(100, 200);
+            waitTime += 150;
+        }
+        
+        // Timeout - assume mining failed
+        updateStatus("Mining timeout - no ore gained after " + (maxWaitTime / 1000) + " seconds");
+        return false;
+    }
+    
+    /**
+     * Gets common variations of ore names that might be found in game
+     */
+    private String[] getOreNameVariations(String oreName) {
+        switch (oreName.toLowerCase()) {
+            case "copper ore":
+                return new String[]{"Copper", "Copper rock", "Copper rocks"};
+            case "tin ore":
+                return new String[]{"Tin", "Tin rock", "Tin rocks"};
+            case "iron ore":
+                return new String[]{"Iron", "Iron rock", "Iron rocks"};
+            case "coal":
+                return new String[]{"Coal rock", "Coal rocks"};
+            case "mithril ore":
+                return new String[]{"Mithril", "Mithril rock", "Mithril rocks"};
+            case "adamantite ore":
+                return new String[]{"Adamantite", "Adamantite rock", "Adamantite rocks"};
+            case "runite ore":
+                return new String[]{"Runite", "Runite rock", "Runite rocks"};
+            default:
+                return new String[]{oreName.replace(" ore", ""), oreName + " rock", oreName + " rocks"};
+        }
+    }
+    
+
 
     /**
      * Handles banking operations based on current needs with intelligent item management
@@ -522,16 +748,72 @@ public class AIOMetalWorkerScript extends Script {
         
         try {
             // First, deposit all items except tools
+            updateStatus("Depositing items except tools...");
             depositItemsExceptTools();
             sleep(600, 1000);
             
+            // IMPORTANT: Check if target mining quantity is reached after depositing ores
+            // This ensures we transition to next phase right away if target is reached
+            int totalOresMined = progress.getOresMined();
+            int targetQuantity = config.targetQuantity();
+            
+            if (totalOresMined >= targetQuantity) {
+                updateStatus("Target mining quantity reached after deposit! Ores: " + totalOresMined + "/" + targetQuantity);
+                
+                // Close bank and determine next phase immediately
+                Rs2Bank.closeBank();
+                sleep(500, 800);
+                
+                // Force transition to next phase (smelting/smithing/complete)
+                if (config.smeltBars() && needsMoreOresForSmelting()) {
+                    updateStatus("Moving to smelting phase - target reached! Withdrawing ores...");
+                    
+                    // Reopen bank to withdraw ores for smelting
+                    if (Rs2Bank.openBank()) {
+                        sleep(600, 1000);
+                        withdrawOresForSmelting();
+                        Rs2Bank.closeBank();
+                        sleep(500, 800);
+                    }
+                    
+                    currentPhase = ProcessPhase.WALKING; // Will walk to furnace
+                } else if (config.smithItems() && needsBarsForSmithing()) {
+                    updateStatus("Moving to smithing phase - target reached! Withdrawing bars...");
+                    
+                    // Reopen bank to withdraw bars for smithing
+                    if (Rs2Bank.openBank()) {
+                        sleep(600, 1000);
+                        withdrawBarsForSmithing();
+                        Rs2Bank.closeBank();
+                        sleep(500, 800);
+                    }
+                    
+                    currentPhase = ProcessPhase.WALKING; // Will walk to anvil
+                } else {
+                    updateStatus("All tasks completed - target reached!");
+                    currentPhase = ProcessPhase.COMPLETE;
+                }
+                return; // Exit banking immediately
+            }
+            
+            // Continue with normal banking operations if more ores needed
+            updateStatus("Still need more ores - continuing normal banking...");
+            
             // Withdraw necessary tools based on next planned activity
+            updateStatus("Withdrawing required tools...");
             withdrawRequiredTools();
             
             // Withdraw required items for next phase
+            updateStatus("Withdrawing required items...");
             withdrawRequiredItems();
             
+            // Close bank before determining next phase
+            updateStatus("Closing bank...");
+            Rs2Bank.closeBank();
+            sleep(500, 800);
+            
             // Determine next phase based on current progress and config
+            updateStatus("Determining next phase...");
             determineNextPhaseFromBank();
             
         } catch (Exception e) {
@@ -571,21 +853,44 @@ public class AIOMetalWorkerScript extends Script {
      * Withdraws required tools based on next activity
      */
     private void withdrawRequiredTools() {
-        // Withdraw pickaxe if needed and not equipped
-        if (config.withdrawPickaxe() && !hasPickaxe()) {
+        // Determine what phase we'll be doing next
+        ProcessPhase nextPhase = determineNextPhase();
+        
+        // Withdraw pickaxe if needed for mining and not equipped
+        if ((nextPhase == ProcessPhase.MINING || config.withdrawPickaxe()) && !hasPickaxe()) {
             if (!withdrawBestPickaxe()) {
                 Rs2Bank.withdrawOne("Bronze pickaxe"); // Fallback
             }
         }
         
-        // Withdraw hammer if needed for smithing
-        if (config.smithItems() && !hasHammer()) {
+        // Only withdraw hammer if we're actually going to be smithing (not smelting!)
+        if (nextPhase == ProcessPhase.SMITHING && config.smithItems() && !hasHammer()) {
             Rs2Bank.withdrawOne("Hammer");
+            updateStatus("Withdrawing hammer for smithing");
         }
         
         // Withdraw special equipment if enabled
         if (config.useSpecialEquipment()) {
             withdrawSpecialEquipment();
+        }
+    }
+    
+    /**
+     * Determines what the next phase will be without changing currentPhase
+     */
+    private ProcessPhase determineNextPhase() {
+        // Check if we haven't reached the target ore quantity yet
+        int totalOresMined = progress.getOresMined();
+        int targetQuantity = config.targetQuantity();
+        
+        if (totalOresMined < targetQuantity) {
+            return ProcessPhase.MINING;
+        } else if (config.smeltBars() && needsMoreOresForSmelting()) {
+            return ProcessPhase.SMELTING;
+        } else if (config.smithItems() && needsBarsForSmithing()) {
+            return ProcessPhase.SMITHING;
+        } else {
+            return ProcessPhase.COMPLETE;
         }
     }
     
@@ -632,10 +937,23 @@ public class AIOMetalWorkerScript extends Script {
      * Withdraws required items for the next phase
      */
     private void withdrawRequiredItems() {
-        if (needsMoreOresForSmelting()) {
-            withdrawOresForSmelting();
-        } else if (needsBarsForSmithing()) {
-            withdrawBarsForSmithing();
+        ProcessPhase nextPhase = determineNextPhase();
+        updateStatus("Withdrawing items for next phase: " + nextPhase);
+        
+        switch (nextPhase) {
+            case MINING:
+                // No items needed for mining (just tools)
+                updateStatus("No items needed for mining");
+                break;
+            case SMELTING:
+                withdrawOresForSmelting();
+                break;
+            case SMITHING:
+                withdrawBarsForSmithing();
+                break;
+            default:
+                updateStatus("No items needed for phase: " + nextPhase);
+                break;
         }
     }
     
@@ -645,15 +963,29 @@ public class AIOMetalWorkerScript extends Script {
     private void withdrawOresForSmelting() {
         updateStatus("Withdrawing ores for smelting...");
         
-        Map<String, Integer> requiredOres = calculateRequiredOres();
+        String[] oreNames = config.metalType().getOreNames();
+        int availableSlots = 28 - Rs2Inventory.count(); // Account for existing items/tools
         
-        for (Map.Entry<String, Integer> entry : requiredOres.entrySet()) {
-            String oreName = entry.getKey();
-            int required = entry.getValue();
+        updateStatus("Available inventory slots: " + availableSlots);
+        
+        // For simple metals like iron, just fill the inventory
+        if (oreNames.length == 1) {
+            String oreName = oreNames[0];
+            updateStatus("Withdrawing " + availableSlots + " " + oreName + " for smelting");
+            Rs2Bank.withdrawX(oreName, availableSlots);
+        } else {
+            // For alloy metals, use ratio-based withdrawal
+            Map<String, Integer> requiredOres = calculateRequiredOres();
             
-            if (Rs2Bank.hasItem(oreName)) {
-                Rs2Bank.withdrawX(oreName, required);
-                sleep(300, 600);
+            for (Map.Entry<String, Integer> entry : requiredOres.entrySet()) {
+                String oreName = entry.getKey();
+                int required = entry.getValue();
+                
+                if (Rs2Bank.hasItem(oreName) && required > 0) {
+                    updateStatus("Withdrawing " + required + " " + oreName);
+                    Rs2Bank.withdrawX(oreName, required);
+                    sleep(300, 600);
+                }
             }
         }
     }
@@ -706,17 +1038,33 @@ public class AIOMetalWorkerScript extends Script {
      * Determines the next phase based on current progress and available items
      */
     private void determineNextPhaseFromBank() {
-        if (needsMoreOres()) {
-            currentPhase = ProcessPhase.MINING;
-        } else if (config.smeltBars() && needsMoreOresForSmelting()) {
-            currentPhase = ProcessPhase.SMELTING;
-        } else if (config.smithItems() && needsBarsForSmithing()) {
-            currentPhase = ProcessPhase.SMITHING;
-        } else {
+        updateStatus("Analyzing current progress to determine next phase...");
+        
+        int totalOresMined = progress.getOresMined();
+        int targetQuantity = config.targetQuantity();
+        
+        // Priority 1: Check if we haven't reached the target ore quantity yet
+        if (totalOresMined < targetQuantity) {
+            updateStatus("Target not reached - continuing mining (Ores: " + totalOresMined + "/" + targetQuantity + ")");
+            currentPhase = ProcessPhase.WALKING; // Walk back to mining area
+        } 
+        // Priority 2: Target reached - check if smelting is enabled and we have ores in bank
+        else if (config.smeltBars() && needsMoreOresForSmelting()) {
+            updateStatus("Target reached! Moving to smelting phase - have ores in bank");
+            currentPhase = ProcessPhase.WALKING; // Walk to furnace
+        } 
+        // Priority 3: Check if smithing is enabled and we have bars in bank
+        else if (config.smithItems() && needsBarsForSmithing()) {
+            updateStatus("Smelting complete! Moving to smithing phase - have bars in bank");
+            currentPhase = ProcessPhase.WALKING; // Walk to anvil
+        } 
+        // Priority 4: All tasks completed
+        else {
+            updateStatus("All tasks completed!");
             currentPhase = ProcessPhase.COMPLETE;
         }
         
-        updateStatus("Next phase: " + currentPhase);
+        updateStatus("Next phase determined: " + currentPhase);
     }
     
     // Helper methods for banking logic
@@ -742,15 +1090,18 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * Determines the nearest bank based on current location
+     * Gets the nearest bank using Microbot's intelligent bank detection
      */
-    private WorldPoint getNearestBank() {
-        WorldPoint playerLocation = Rs2Player.getWorldLocation();
-        
-        if (playerLocation.distanceTo(AL_KHARID_BANK) < playerLocation.distanceTo(LUMBRIDGE_BANK)) {
-            return AL_KHARID_BANK;
+    private BankLocation getNearestBank() {
+        BankLocation nearestBank = Rs2Bank.getNearestBank();
+        if (nearestBank != null) {
+            updateStatus("Found nearest bank: " + nearestBank.toString());
+            return nearestBank;
         }
-        return LUMBRIDGE_BANK;
+        
+        // Fallback to Al Kharid if no bank found (shouldn't happen)
+        updateStatus("No bank detected - defaulting to Al Kharid");
+        return BankLocation.AL_KHARID;
     }
 
     /**
@@ -814,6 +1165,24 @@ public class AIOMetalWorkerScript extends Script {
         Rs2AntibanSettings.actionCooldownChance = 0.1;
         Rs2AntibanSettings.microBreakChance = 0.05;
         // Additional anti-ban configuration can be added here
+    }
+
+    /**
+     * Checks if the task is complete based on target quantities
+     */
+    private boolean isTaskComplete() {
+        // Check if we've reached target ore quantity and completed all phases
+        boolean oreTargetReached = progress.getOresMined() >= config.targetQuantity();
+        
+        // If smelting is enabled, check if we've smelted enough bars
+        boolean smeltingComplete = !config.smeltBars() || 
+            progress.getBarsSmelted() >= getRequiredBars();
+        
+        // If smithing is enabled, check if we've smithed enough items
+        boolean smithingComplete = !config.smithItems() || 
+            progress.getItemsSmithed() >= getRequiredItems();
+        
+        return oreTargetReached && smeltingComplete && smithingComplete;
     }
 
     /**
@@ -965,35 +1334,98 @@ public class AIOMetalWorkerScript extends Script {
      * @return WorldPoint of the destination, or null if no movement needed
      */
     private WorldPoint determineWalkingDestination() {
+        updateStatus("Determining walking destination for phase: " + currentPhase);
+        
         switch (currentPhase) {
+            case WALKING:
+                // If we're in WALKING phase, determine where we should go based on what we need to do next
+                ProcessPhase nextPhase = determineNextPhase();
+                updateStatus("Walking phase - next intended phase: " + nextPhase);
+                
+                switch (nextPhase) {
+                    case MINING:
+                        // CRITICAL: Double-check target before walking back to mining
+                        int totalOresMined = progress.getOresMined();
+                        int targetQuantity = config.targetQuantity();
+                        
+                        if (totalOresMined >= targetQuantity) {
+                            updateStatus("Target mining quantity reached - not walking to mining area");
+                            // Force transition to next appropriate phase instead
+                            if (config.smeltBars()) {
+                                currentPhase = ProcessPhase.SMELTING;
+                                return FURNACE_LOCATION;
+                            } else if (config.smithItems()) {
+                                currentPhase = ProcessPhase.SMITHING;
+                                return ANVIL_LOCATION;
+                            } else {
+                                currentPhase = ProcessPhase.COMPLETE;
+                                return null;
+                            }
+                        }
+                        
+                        // Ensure we have a valid mining area
+                        if (currentMiningArea == null) {
+                            currentMiningArea = detectCurrentMiningArea();
+                            updateStatus("Re-detected mining area: " + getLocationName(currentMiningArea));
+                        }
+                        updateStatus("Walking back to mining area: " + getLocationName(currentMiningArea));
+                        return currentMiningArea;
+                        
+                    case SMELTING:
+                        updateStatus("Walking to furnace for smelting");
+                        return FURNACE_LOCATION;
+                        
+                    case SMITHING:
+                        updateStatus("Walking to anvil for smithing");
+                        return ANVIL_LOCATION;
+                        
+                    default:
+                        updateStatus("No specific destination needed for: " + nextPhase);
+                        return null;
+                }
+                
             case MINING:
+                // CRITICAL: Check target before deciding to walk to mining area
+                int totalOresMined = progress.getOresMined();
+                int targetQuantity = config.targetQuantity();
+                
+                if (totalOresMined >= targetQuantity) {
+                    updateStatus("Target mining quantity reached - not going to mining area");
+                    currentPhase = ProcessPhase.BANKING; // Go bank to proceed to next phase
+                    return null;
+                }
+                
                 // Return current mining area or stay where we are if mining is possible
                 if (currentMiningArea != null) {
+                    updateStatus("Walking to current mining area: " + getLocationName(currentMiningArea));
                     return currentMiningArea;
                 } else if (hasNearbyOres()) {
+                    updateStatus("Ores nearby - no walking needed");
                     return null; // No need to walk, ores are nearby
                 } else {
                     // Default to Al Kharid mining for iron
+                    updateStatus("Walking to default mining area: Al Kharid");
                     return AL_KHARID_MINING_AREA;
                 }
                 
             case SMELTING:
+                updateStatus("Walking to furnace");
                 return FURNACE_LOCATION;
                 
             case SMITHING:
+                updateStatus("Walking to anvil");
                 return ANVIL_LOCATION;
                 
             case BANKING:
-                // Choose bank based on next planned activity
-                if (needsMoreOres()) {
-                    return AL_KHARID_BANK; // Closer to Al Kharid mining area
-                } else if (config.smeltBars() && hasOresForSmelting()) {
-                    return AL_KHARID_BANK; // Closer to furnace
-                } else {
-                    return AL_KHARID_BANK; // Default to Al Kharid
-                }
+                // For banking phase, we'll let the banking method handle walking
+                // Return null to avoid walking conflicts
+                updateStatus("Banking phase - banking method will handle walking");
+                return null;
                 
+            case ERROR:
+            case COMPLETE:
             default:
+                updateStatus("No destination needed for phase: " + currentPhase);
                 return null;
         }
     }
@@ -1006,8 +1438,17 @@ public class AIOMetalWorkerScript extends Script {
         if (point.equals(AL_KHARID_MINING_AREA)) return "Al Kharid Mining Area";
         if (point.equals(FURNACE_LOCATION)) return "Al Kharid Furnace";
         if (point.equals(ANVIL_LOCATION)) return "Varrock Anvil";
+        
+        // Check if this point matches any bank location
+        BankLocation nearestBank = getNearestBank();
+        if (nearestBank != null && point.equals(nearestBank.getWorldPoint())) {
+            return nearestBank.toString() + " Bank";
+        }
+        
+        // Fallback for legacy bank coordinates
         if (point.equals(LUMBRIDGE_BANK)) return "Lumbridge Bank";
         if (point.equals(AL_KHARID_BANK)) return "Al Kharid Bank";
+        
         return "Mining Area";
     }
     
@@ -1015,27 +1456,34 @@ public class AIOMetalWorkerScript extends Script {
      * Updates the current phase after reaching a walking destination
      */
     private void updatePhaseAfterWalking(WorldPoint destination) {
-        if (destination.equals(LUMBRIDGE_MINING_AREA) || destination.equals(AL_KHARID_MINING_AREA)) {
+        if (destination.equals(LUMBRIDGE_MINING_AREA) || destination.equals(AL_KHARID_MINING_AREA) || destination.equals(currentMiningArea)) {
             currentPhase = ProcessPhase.MINING;
-            currentMiningArea = destination; // Set the current mining area
+            // Ensure current mining area is set to the destination we just reached
+            if (currentMiningArea == null || !currentMiningArea.equals(destination)) {
+                currentMiningArea = destination;
+                updateStatus("Updated current mining area to: " + getLocationName(currentMiningArea));
+            }
         } else if (destination.equals(FURNACE_LOCATION)) {
             currentPhase = ProcessPhase.SMELTING;
         } else if (destination.equals(ANVIL_LOCATION)) {
             currentPhase = ProcessPhase.SMITHING;
-        } else if (destination.equals(LUMBRIDGE_BANK) || destination.equals(AL_KHARID_BANK)) {
-            currentPhase = ProcessPhase.BANKING;
         } else {
-            // If destination is current mining area, switch to mining
-            currentPhase = ProcessPhase.MINING;
+            // Check if destination is a bank location
+            BankLocation nearestBank = getNearestBank();
+            if (nearestBank != null && destination.equals(nearestBank.getWorldPoint())) {
+                currentPhase = ProcessPhase.BANKING;
+            } else if (destination.equals(LUMBRIDGE_BANK) || destination.equals(AL_KHARID_BANK)) {
+                // Legacy bank coordinate support
+                currentPhase = ProcessPhase.BANKING;
+            } else {
+                // If destination is current mining area, switch to mining
+                currentPhase = ProcessPhase.MINING;
+                currentMiningArea = destination; // Set the destination as the new mining area
+                updateStatus("Set new mining area to: " + getLocationName(currentMiningArea));
+            }
         }
-    }
-    
-    /**
-     * Checks if we need to mine more ores based on target quantity and current progress
-     */
-    private boolean needsMoreOres() {
-        return progress.getOresMined() < config.targetQuantity() || 
-               !hasMinimumOresForOperation();
+        
+        updateStatus("Phase updated to: " + currentPhase + " after reaching destination");
     }
     
     /**
@@ -1076,15 +1524,6 @@ public class AIOMetalWorkerScript extends Script {
         return config.metalType().hasRequiredOres();
     }
     
-    /**
-     * Checks if we have minimum ores needed to continue operation efficiently
-     */
-    private boolean hasMinimumOresForOperation() {
-        int currentOres = getTotalOreCount();
-        int minimumRequired = config.metalType().getTotalOreCount(5); // At least 5 bars worth
-        return currentOres >= minimumRequired;
-    }
-    
     // Event handler methods called from plugin
     
     /**
@@ -1120,9 +1559,21 @@ public class AIOMetalWorkerScript extends Script {
      */
     public void onMiningSuccess() {
         progress.incrementOresMined();
+        updateProgressStatus();
         if (config.enableDebugLogs()) {
             Microbot.log("Mining successful - total ores: " + progress.getOresMined());
         }
+    }
+    
+    /**
+     * Updates the status with current progress information
+     */
+    private void updateProgressStatus() {
+        int oresMined = progress.getOresMined();
+        int targetQuantity = config.targetQuantity();
+        String progressText = String.format("Progress: %d/%d ores mined (%.1f%%)", 
+            oresMined, targetQuantity, (oresMined * 100.0 / targetQuantity));
+        updateStatus(progressText);
     }
     
     /**
@@ -1140,6 +1591,13 @@ public class AIOMetalWorkerScript extends Script {
         if (config.enableDebugLogs()) {
             Microbot.log("Inventory changed");
         }
+    }
+
+    /**
+     * Gets the current configuration for external access
+     */
+    public AIOMetalWorkerConfig getConfig() {
+        return config;
     }
 
     /**

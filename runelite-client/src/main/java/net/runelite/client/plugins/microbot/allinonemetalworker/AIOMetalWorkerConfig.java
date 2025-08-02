@@ -50,7 +50,7 @@ public interface AIOMetalWorkerConfig extends Config {
             position = 1,
             section = generalSection
     )
-    @Range(min = 28, max = 10000)
+    @Range(min = 0, max = 10000)
     default int targetQuantity() {
         return 560;
     }
@@ -62,7 +62,7 @@ public interface AIOMetalWorkerConfig extends Config {
             position = 2,
             section = generalSection
     )
-    @Range(min = 5, max = 30)
+    @Range(min = 0, max = 30)
     default int miningRange() {
         return 15;
     }
