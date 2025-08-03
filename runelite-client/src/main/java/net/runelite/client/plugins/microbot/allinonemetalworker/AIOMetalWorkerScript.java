@@ -69,6 +69,9 @@ public class AIOMetalWorkerScript extends Script {
     // LEVEL TRACKING: Track smithing level to only recheck when level increases
     private int lastKnownSmithingLevel = 0;
     private int currentSelectedItemChildId = -1; // Track currently selected smithing item
+    
+    // LEFTOVER BARS TRACKING: Flag to force dynamic item selection for leftover bars
+    private boolean forceItemReselection = false;
 
     public AIOMetalWorkerScript() {
         // Default constructor
@@ -87,6 +90,19 @@ public class AIOMetalWorkerScript extends Script {
         try {
             // EXPERT FIX: Reset shutdown flag for proper restart
             isShuttingDown = false;
+
+            // FORCE DEBUG LOGGING FOR TROUBLESHOOTING
+            Microbot.log("=== AIO METAL WORKER DEBUG SESSION START ===");
+            Microbot.log("Starting phase configuration: " + config.startingPhase());
+            Microbot.log("Metal type: " + config.metalType().getDisplayName());
+            Microbot.log("Debug logs enabled: " + config.enableDebugLogs());
+            Microbot.log("Smelt bars: " + config.smeltBars());
+            Microbot.log("Smith items: " + config.smithItems());
+            
+            // TEMPORARY DEBUG OVERRIDE: Force enable debug logs for smithing start mode troubleshooting
+            if (config.startingPhase() == StartingPhase.SMITHING) {
+                Microbot.log("SMITHING START MODE DETECTED - Enabling enhanced debug logging for troubleshooting");
+            }
 
             // Initialize progress tracking
             if (progress.getStartTime() == null) {
@@ -111,16 +127,36 @@ public class AIOMetalWorkerScript extends Script {
                         break;
                     case SMITHING:
                         currentPhase = ProcessPhase.SMITHING;
-                        // For smithing, we need all ores but only some bars to continue working
-                        progress.setOresMined(config.targetQuantity());
-                        // Set bars to a reasonable amount but not the full target
-                        int smithingStartBars = Math.max(1, Math.min(getRequiredBars() - 1, 27)); // At most an
-                                                                                                  // inventory, at least
-                                                                                                  // 1
-                        progress.setBarsSmelted(smithingStartBars);
-                        Microbot.log("Starting at SMITHING phase (debug mode) - simulated " + config.targetQuantity()
-                                + " ores mined and " + smithingStartBars + " bars smelted (target: " + getRequiredBars()
-                                + ")");
+                        // For smithing start mode, we need to set progress based on actual inventory/bank state
+                        // Not simulated progress that might not match reality
+                        progress.setOresMined(config.targetQuantity()); // Assume target reached for logic
+                        
+                        // SMITHING START MODE FIX: Set bars smelted based on what's actually available
+                        // This prevents the disconnect between simulated progress and reality
+                        String barName = config.metalType().getBarName();
+                        int actualBarsAvailable = 0;
+                        
+                        // Try to count bars in inventory if accessible (when player is logged in)
+                        try {
+                            actualBarsAvailable += Rs2Inventory.count(barName);
+                        } catch (Exception e) {
+                            // Ignore - player might not be logged in yet
+                        }
+                        
+                        // Set progress to reflect reality or use a safe default
+                        if (actualBarsAvailable > 0) {
+                            progress.setBarsSmelted(actualBarsAvailable);
+                            Microbot.log("Starting at SMITHING phase - found " + actualBarsAvailable + " " + barName + " available");
+                        } else {
+                            // No bars available - reset everything so script will mine first
+                            progress.setOresMined(0);
+                            progress.setBarsSmelted(0);
+                            Microbot.log("Starting at SMITHING phase - no bars available, will start from mining");
+                        }
+                        
+                        progress.setOresUsedForSmelting(0); // Reset for fresh start
+                        Microbot.log("Starting at SMITHING phase (adaptive mode) - ores: " + progress.getOresMined() 
+                                + "/" + config.targetQuantity() + ", bars: " + progress.getBarsSmelted() + "/" + getRequiredBars());
                         break;
                     default:
                         currentPhase = ProcessPhase.MINING;
@@ -326,23 +362,29 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * Gets the closest known mining area to the player with combat level prioritization
-     * COMBAT LEVEL ENHANCEMENT: Prioritizes Al Kharid for combat level 29+ (safer area)
-     * Otherwise defaults to Lumbridge mining area for lower combat levels
+     * Gets the closest known mining area to the player
      */
     private WorldPoint getClosestMiningArea(WorldPoint playerLocation) {
-        // COMBAT LEVEL PRIORITIZATION: Check player's combat level
-        int combatLevel = Rs2Player.getCombatLevel();
-        
-        if (combatLevel >= 29) {
-            // Combat level 29+ can handle Al Kharid area - prioritize it
-            updateStatus("Combat level " + combatLevel + " - prioritizing Al Kharid mining area (safer)");
-            return AL_KHARID_MINING_AREA;
-        } else {
-            // Lower combat level - use Lumbridge mining area (safer for new players)
-            updateStatus("Combat level " + combatLevel + " - using Lumbridge mining area (recommended for lower levels)");
-            return LUMBRIDGE_MINING_AREA;
+        WorldPoint[] knownAreas = {
+                AL_KHARID_MINING_AREA,
+                LUMBRIDGE_MINING_AREA,
+                new WorldPoint(3183, 3376, 0), // Varrock East mine
+                new WorldPoint(3146, 3149, 0), // Lumbridge Swamp East mine
+                new WorldPoint(3289, 3365, 0) // Al Kharid mine north
+        };
+
+        WorldPoint closest = knownAreas[0];
+        int shortestDistance = playerLocation.distanceTo(closest);
+
+        for (WorldPoint area : knownAreas) {
+            int distance = playerLocation.distanceTo(area);
+            if (distance < shortestDistance) {
+                shortestDistance = distance;
+                closest = area;
+            }
         }
+
+        return closest;
     }
 
     /**
@@ -587,9 +629,26 @@ public class AIOMetalWorkerScript extends Script {
 
         updateStatus("MYTHICAL: Smithing " + config.metalType().getDisplayName() + " items");
 
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== SMITHING PHASE DEBUG ===");
+            Microbot.log("Current phase: " + currentPhase);
+            Microbot.log("Starting phase: " + config.startingPhase());
+            Microbot.log("Player location: " + Rs2Player.getWorldLocation());
+            Microbot.log("Anvil location: " + ANVIL_LOCATION);
+            Microbot.log("Distance to anvil: " + Rs2Player.getWorldLocation().distanceTo(ANVIL_LOCATION));
+            String barName = config.metalType().getBarName();
+            Microbot.log("Looking for bars: " + barName);
+            Microbot.log("Bars in inventory: " + Rs2Inventory.count(barName));
+            Microbot.log("Has bars to smith: " + hasBarsToSmith());
+            Microbot.log("Has hammer: " + hasHammer());
+        }
+
         // Check if we're at the anvil
         if (Rs2Player.getWorldLocation().distanceTo(ANVIL_LOCATION) > 3) {
             updateStatus("MYTHICAL: Not at anvil - walking to Varrock anvil");
+            if (config.enableDebugLogs()) {
+                Microbot.log("SMITHING: Too far from anvil, switching to WALKING phase");
+            }
             currentPhase = ProcessPhase.WALKING;
             return;
         }
@@ -647,18 +706,81 @@ public class AIOMetalWorkerScript extends Script {
                 updateStatus("EXPERT FIX: Anvil interface opened (Widget 312) - selecting best item");
                 sleep(186, 480); // Match working plugin timing
 
-                // LEVEL-BASED PROGRESSION: Only recheck smithing item if level has increased
-                if (selectSmithingItemOnLevelUp()) {
-                    updateStatus("LEVEL-UP: Selected smithing option - smithing full inventory");
-                    System.out.println("[DEBUG] Level-based smithing option selected, waiting for full completion");
+                // LEFTOVER BARS ENHANCEMENT: Check if we need to force item reselection for leftover bars
+                // or use normal level-based selection
+                boolean selectionSuccess = false;
+                
+                if (forceItemReselection) {
+                    updateStatus("LEFTOVER BARS: Using dynamic item selection for remaining bars");
+                    System.out.println("[DEBUG] LEFTOVER BARS: Force reselection flag set - using dynamic selection");
+                    
+                    // Log current inventory state before dynamic selection
+                    String barName = config.metalType().getBarName();
+                    int currentBars = Rs2Inventory.count(barName);
+                    System.out.println("[DEBUG] LEFTOVER BARS: Current bars in inventory: " + currentBars + " " + barName);
+                    
+                    // Use dynamic selection to pick the best item for remaining bars
+                    selectionSuccess = selectBestSmithingOptionDynamic();
+                    
+                    // Clear the flag after using it
+                    forceItemReselection = false;
+                    
+                    if (selectionSuccess) {
+                        updateStatus("LEFTOVER BARS: Successfully selected optimal item for remaining bars");
+                        System.out.println("[DEBUG] LEFTOVER BARS: Dynamic selection successful");
+                    } else {
+                        updateStatus("LEFTOVER BARS: Failed to select item dynamically - falling back to level-based selection");
+                        System.out.println("[DEBUG] LEFTOVER BARS: Dynamic selection failed, trying level-based");
+                        selectionSuccess = selectSmithingItemOnLevelUp();
+                    }
+                } else {
+                    // Normal level-based selection
+                    selectionSuccess = selectSmithingItemOnLevelUp();
+                }
+
+                if (selectionSuccess) {
+                    updateStatus("SMITHING: Selected smithing option - smithing remaining bars");
+                    System.out.println("[DEBUG] Smithing option selected, waiting for completion");
                     
                     // Wait for full smithing session to complete (all bars in inventory)
                     waitForFullSmithingSession();
 
-                    // After full smithing session, check if we should continue or bank
+                    // INTELLIGENT LEFTOVER BAR HANDLING: After smithing session, check if there are leftover bars
+                    // that can still be smithed into different items
                     if (hasBarsToSmith()) {
-                        updateStatus("LEVEL-UP: More bars available - will recheck level next cycle");
-                        // Continue smithing cycle - level will be rechecked next anvil interaction
+                        String barName = config.metalType().getBarName();
+                        int remainingBars = Rs2Inventory.count(barName);
+                        int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
+                        String metalType = config.metalType().getDisplayName().toLowerCase();
+                        
+                        updateStatus("LEFTOVER BARS: Found " + remainingBars + " bars remaining after smithing session");
+                        System.out.println("[DEBUG] LEFTOVER BARS: " + remainingBars + " " + barName + " remaining, checking for suitable items");
+                        
+                        // Check if we can make a different item with the remaining bars
+                        int bestItemForRemainingBars = getBestSmithingItemChildIdDynamic(metalType, currentSmithingLevel, remainingBars);
+                        
+                        if (bestItemForRemainingBars != -1) {
+                            updateStatus("LEFTOVER BARS: Found suitable item for " + remainingBars + " remaining bars - continuing smithing");
+                            System.out.println("[DEBUG] LEFTOVER BARS: Can make item with child ID " + bestItemForRemainingBars + " using " + remainingBars + " bars");
+                            
+                            // Set flag to force dynamic item selection on next anvil interaction
+                            forceItemReselection = true;
+                            
+                            // Continue smithing with the remaining bars - the next anvil interaction will select the appropriate item
+                            // Don't change phase - stay in smithing to handle the leftover bars
+                        } else {
+                            updateStatus("LEFTOVER BARS: No suitable items for " + remainingBars + " remaining bars - going to bank");
+                            System.out.println("[DEBUG] LEFTOVER BARS: No suitable items for " + remainingBars + " bars, going to bank");
+                            
+                            // Can't make anything useful with remaining bars - go to bank to deposit them
+                            if (hasSmithedItemsToDeposit()) {
+                                updateStatus("LEFTOVER BARS: Have finished items to deposit along with unusable bars");
+                                currentPhase = ProcessPhase.BANKING;
+                            } else {
+                                updateStatus("LEFTOVER BARS: Going to bank to deposit unusable bars and check for more");
+                                currentPhase = ProcessPhase.BANKING;
+                            }
+                        }
                     } else {
                         updateStatus("LEVEL-UP: No more bars in inventory - checking bank for continuous smithing");
                         
@@ -673,8 +795,8 @@ public class AIOMetalWorkerScript extends Script {
                         }
                     }
                 } else {
-                    updateStatus("LEVEL-UP: Failed to select smithing option - will retry");
-                    System.out.println("[DEBUG] Failed to select level-based smithing option");
+                    updateStatus("SMITHING: Failed to select smithing option - will retry");
+                    System.out.println("[DEBUG] Failed to select smithing option");
                 }
             } else {
                 updateStatus("EXPERT FIX: Anvil interface (312,1) did not appear - will retry");
@@ -712,11 +834,26 @@ public class AIOMetalWorkerScript extends Script {
 
         WorldPoint destination = determineWalkingDestination();
 
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== WALKING PHASE DEBUG ===");
+            Microbot.log("Current phase: " + currentPhase);
+            Microbot.log("Starting phase: " + config.startingPhase());
+            Microbot.log("Player location: " + Rs2Player.getWorldLocation());
+            Microbot.log("Determined destination: " + destination);
+            if (destination != null) {
+                Microbot.log("Destination name: " + getLocationName(destination));
+                Microbot.log("Distance to destination: " + Rs2Player.getWorldLocation().distanceTo(destination));
+            }
+        }
+
         if (destination != null) {
             updateStatus("Walking to " + getLocationName(destination));
 
             // Check if already close to destination
             if (Rs2Player.getWorldLocation().distanceTo(destination) <= 3) {
+                if (config.enableDebugLogs()) {
+                    Microbot.log("WALKING: Already close to destination, updating phase");
+                }
                 updatePhaseAfterWalking(destination);
                 return;
             }
@@ -961,6 +1098,34 @@ public class AIOMetalWorkerScript extends Script {
      */
     private void handleBankingOperations() {
         updateStatus("Processing banking operations...");
+        
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== BANKING OPERATIONS DEBUG ===");
+            Microbot.log("Current phase: " + currentPhase);
+            Microbot.log("Starting phase: " + config.startingPhase());
+            Microbot.log("Metal type: " + config.metalType().getDisplayName());
+            Microbot.log("Bar name: " + config.metalType().getBarName());
+            Microbot.log("Smelt bars enabled: " + config.smeltBars());
+            Microbot.log("Smith items enabled: " + config.smithItems());
+            Microbot.log("Progress - Ores mined: " + progress.getOresMined() + "/" + config.targetQuantity());
+            Microbot.log("Progress - Bars smelted: " + progress.getBarsSmelted() + "/" + getRequiredBars());
+            Microbot.log("Progress - Items smithed: " + progress.getItemsSmithed());
+            
+            // Log current inventory state
+            String barName = config.metalType().getBarName();
+            Microbot.log("Inventory - Bars: " + Rs2Inventory.count(barName));
+            for (String oreName : config.metalType().getOreNames()) {
+                Microbot.log("Inventory - " + oreName + ": " + Rs2Inventory.count(oreName));
+            }
+            
+            // Check what's in bank
+            if (Rs2Bank.isOpen()) {
+                Microbot.log("Bank - " + barName + ": " + Rs2Bank.count(barName));
+                for (String oreName : config.metalType().getOreNames()) {
+                    Microbot.log("Bank - " + oreName + ": " + Rs2Bank.count(oreName));
+                }
+            }
+        }
 
         try {
             // CONTINUOUS SMITHING ENHANCEMENT: Handle smithing workflow specifically
@@ -1079,24 +1244,63 @@ public class AIOMetalWorkerScript extends Script {
             updateStatus("Withdrawing required tools...");
             withdrawRequiredTools();
 
-            // SMITHING PRIORITY FIX: Handle context-aware item withdrawal
-            // If we came from smithing phase and need bars, prioritize getting bars
-            if (currentPhase == ProcessPhase.SMITHING && config.smithItems()) {
-                updateStatus("SMITHING CONTEXT: Currently in smithing phase - checking for bars");
+            // SMITHING STARTING PHASE FIX: Handle smithing-only mode when starting phase is SMITHING
+            if (isSmithingOnlyMode() && config.smithItems() && needsBarsForSmithing()) {
+                updateStatus("SMITHING START MODE: Starting phase is smithing - only working with available bars");
                 
                 if (config.enableDebugLogs()) {
-                    Microbot.log("SMITHING CONTEXT FIX: Detected smithing phase");
+                    Microbot.log("SMITHING START MODE FIX: Starting phase smithing detected");
                     Microbot.log("  Current phase: " + currentPhase);
                     Microbot.log("  Bar name: " + barName);
                     Microbot.log("  Bars in bank: " + Rs2Bank.count(barName));
-                    Microbot.log("  Bars in inventory: " + Rs2Inventory.count(barName));
+                }
+                
+                int barsInBank = Rs2Bank.count(barName);
+                
+                if (barsInBank > 0) {
+                    updateStatus("SMITHING START MODE: Found " + barsInBank + " " + barName + " in bank - withdrawing for smithing");
+                    if (config.enableDebugLogs()) {
+                        Microbot.log("SMITHING START MODE: Withdrawing bars for smithing-only cycle");
+                    }
+                    withdrawBarsForSmithing();
+                    
+                    Rs2Bank.closeBank();
+                    sleep(500, 800);
+                    
+                    // Stay in smithing phase - go back to anvil
+                    currentPhase = ProcessPhase.WALKING;
+                    return;
+                } else {
+                    updateStatus("SMITHING START MODE: No bars available - smithing cycle complete, switching to mining");
+                    if (config.enableDebugLogs()) {
+                        Microbot.log("SMITHING START MODE: No bars in bank, smithing complete - defaulting to mining phase");
+                    }
+                    
+                    Rs2Bank.closeBank();
+                    sleep(500, 800);
+                    
+                    // Switch to mining phase since no bars available for smithing-only mode
+                    currentPhase = ProcessPhase.WALKING; // Will go to mining area
+                    return;
+                }
+            }
+            
+            // SMITHING PRIORITY FIX: Handle mixed-workflow smithing context (not starting phase smithing)
+            // If we came from smithing phase and need bars, prioritize getting bars
+            else if (!isSmithingOnlyMode() && currentPhase == ProcessPhase.SMITHING && config.smithItems() && needsBarsForSmithing()) {
+                updateStatus("SMITHING CONTEXT: Mixed workflow smithing phase - checking for bars and ores");
+                
+                if (config.enableDebugLogs()) {
+                    Microbot.log("SMITHING CONTEXT FIX: Mixed workflow detected smithing phase with missing bars");
+                    Microbot.log("  Current phase: " + currentPhase);
+                    Microbot.log("  Bar name: " + barName);
+                    Microbot.log("  Bars in bank: " + Rs2Bank.count(barName));
                 }
                 
                 // Check if we have bars in bank first
                 int barsInBank = Rs2Bank.count(barName);
-                int barsInInventory = Rs2Inventory.count(barName);
                 
-                if (barsInBank > 0 && barsInInventory == 0) {
+                if (barsInBank > 0) {
                     updateStatus("SMITHING CONTEXT: Found " + barsInBank + " " + barName + " in bank - withdrawing for smithing");
                     if (config.enableDebugLogs()) {
                         Microbot.log("SMITHING CONTEXT FIX: Withdrawing bars for smithing - count: " + barsInBank);
@@ -1108,13 +1312,7 @@ public class AIOMetalWorkerScript extends Script {
                     
                     // Stay in smithing phase - go back to anvil
                     currentPhase = ProcessPhase.WALKING;
-                    return; // CRITICAL: Return early to prevent withdrawRequiredItems() override
-                } else if (barsInInventory > 0) {
-                    updateStatus("SMITHING CONTEXT: Already have " + barsInInventory + " bars in inventory - going to anvil");
-                    Rs2Bank.closeBank();
-                    sleep(500, 800);
-                    currentPhase = ProcessPhase.WALKING;
-                    return; // CRITICAL: Return early 
+                    return;
                 } else {
                     updateStatus("SMITHING CONTEXT: No bars in bank - switching to smelting to make bars");
                     if (config.enableDebugLogs()) {
@@ -1146,7 +1344,7 @@ public class AIOMetalWorkerScript extends Script {
                         
                         // Switch to smelting phase to make bars
                         currentPhase = ProcessPhase.WALKING; // Will determine smelting in walking phase
-                        return; // CRITICAL: Return early to prevent withdrawRequiredItems() override
+                        return;
                     } else {
                         updateStatus("SMITHING CONTEXT: No ores or bars available - need to mine first");
                         if (config.enableDebugLogs()) {
@@ -1310,12 +1508,27 @@ public class AIOMetalWorkerScript extends Script {
             return ProcessPhase.SMELTING;
         }
 
-        if (config.startingPhase() == StartingPhase.SMITHING && config.smithItems() &&
-                needsBarsForSmithing()) {
-            if (config.enableDebugLogs()) {
-                Microbot.log("Starting phase SMITHING override - directing to smithing");
+        // SMITHING START MODE FIX: Special handling for smithing starting phase
+        if (config.startingPhase() == StartingPhase.SMITHING && config.smithItems()) {
+            String barName = config.metalType().getBarName();
+            boolean hasBarsInBank = Rs2Bank.hasItem(barName);
+            boolean hasBarsInInventory = Rs2Inventory.hasItem(barName);
+            
+            // ENHANCED DEBUG for smithing start mode
+            Microbot.log("=== SMITHING START PHASE LOGIC ===");
+            Microbot.log("Bars in bank: " + hasBarsInBank + " (count: " + Rs2Bank.count(barName) + ")");
+            Microbot.log("Bars in inventory: " + hasBarsInInventory + " (count: " + Rs2Inventory.count(barName) + ")");
+            Microbot.log("Needs bars for smithing: " + needsBarsForSmithing());
+            
+            // If we have bars anywhere, continue with smithing
+            if (hasBarsInBank || hasBarsInInventory) {
+                Microbot.log("Starting phase SMITHING override - directing to smithing (bars available)");
+                return ProcessPhase.SMITHING;
+            } else {
+                // No bars available - go to banking first to deposit items and get pickaxe for mining
+                Microbot.log("Starting phase SMITHING override - no bars available, going to banking then mining");
+                return ProcessPhase.BANKING;
             }
-            return ProcessPhase.SMITHING;
         }
 
         if (totalOresMined < targetQuantity) {
@@ -1371,25 +1584,8 @@ public class AIOMetalWorkerScript extends Script {
 
     /**
      * Withdraws required items for the next phase
-     * CONTEXT-AWARE: Respects current phase context to prioritize correct items
      */
     private void withdrawRequiredItems() {
-        // CONTEXT-AWARE FIX: Check current phase context first before determining next phase
-        String barName = config.metalType().getBarName();
-        
-        // If we're currently in smithing phase and need bars, prioritize getting bars
-        if (currentPhase == ProcessPhase.SMITHING && config.smithItems()) {
-            int barsInInventory = Rs2Inventory.count(barName);
-            int barsInBank = Rs2Bank.count(barName);
-            
-            if (barsInInventory == 0 && barsInBank > 0) {
-                updateStatus("CONTEXT-AWARE: In smithing phase with no bars - withdrawing bars for smithing");
-                withdrawBarsForSmithing();
-                return;
-            }
-        }
-        
-        // Otherwise, use general phase determination logic
         ProcessPhase nextPhase = determineNextPhase();
         updateStatus("Withdrawing items for next phase: " + nextPhase);
 
@@ -1551,15 +1747,35 @@ public class AIOMetalWorkerScript extends Script {
      */
     private void withdrawBarsForSmithing() {
         String barName = config.metalType().getBarName();
+        
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== WITHDRAWING BARS FOR SMITHING ===");
+            Microbot.log("Bar name: " + barName);
+            Microbot.log("Bars in bank: " + Rs2Bank.count(barName));
+            Microbot.log("Bars in inventory: " + Rs2Inventory.count(barName));
+            Microbot.log("Has hammer: " + hasHammer());
+            Microbot.log("Available inventory slots: " + (28 - Rs2Inventory.count()));
+        }
 
         // MYTHICAL ENHANCEMENT: First ensure we have a hammer
         if (!hasHammer()) {
             updateStatus("Withdrawing hammer for smithing...");
+            if (config.enableDebugLogs()) {
+                Microbot.log("HAMMER CHECK: No hammer in inventory, checking bank...");
+                Microbot.log("Bank has hammer: " + Rs2Bank.hasItem("Hammer"));
+            }
+            
             if (Rs2Bank.hasItem("Hammer")) {
                 Rs2Bank.withdrawOne("Hammer");
                 sleep(300, 600);
+                if (config.enableDebugLogs()) {
+                    Microbot.log("HAMMER: Withdrew hammer, now has hammer: " + hasHammer());
+                }
             } else {
                 updateStatus("WARNING: No hammer found in bank!");
+                if (config.enableDebugLogs()) {
+                    Microbot.log("ERROR: No hammer in bank! Cannot proceed with smithing");
+                }
                 return;
             }
         }
@@ -1573,14 +1789,33 @@ public class AIOMetalWorkerScript extends Script {
         int barsInBank = Rs2Bank.count(barName);
         int barsToWithdraw = Math.min(maxBarsToWithdraw, barsInBank);
 
+        if (config.enableDebugLogs()) {
+            Microbot.log("BAR WITHDRAWAL CALCULATION:");
+            Microbot.log("  Available slots: " + availableSlots);
+            Microbot.log("  Hammer slots needed: " + hammerSlots);
+            Microbot.log("  Max bars to withdraw: " + maxBarsToWithdraw);
+            Microbot.log("  Bars in bank: " + barsInBank);
+            Microbot.log("  Bars to withdraw: " + barsToWithdraw);
+        }
+
         if (barsToWithdraw > 0) {
             updateStatus("Withdrawing " + barsToWithdraw + " " + barName + " for smithing (max capacity: "
                     + maxBarsToWithdraw + ")");
 
+            if (config.enableDebugLogs()) {
+                Microbot.log("ATTEMPTING BAR WITHDRAWAL: " + barsToWithdraw + " " + barName);
+            }
+
             // MYTHICAL ENHANCEMENT: Use X withdrawal for precise control
             if (barsToWithdraw == barsInBank || barsToWithdraw >= 10) {
+                if (config.enableDebugLogs()) {
+                    Microbot.log("Using withdrawAll for " + barName);
+                }
                 Rs2Bank.withdrawAll(barName);
             } else {
+                if (config.enableDebugLogs()) {
+                    Microbot.log("Using withdrawX for " + barsToWithdraw + " " + barName);
+                }
                 Rs2Bank.withdrawX(barName, barsToWithdraw);
             }
 
@@ -1588,9 +1823,15 @@ public class AIOMetalWorkerScript extends Script {
 
             if (config.enableDebugLogs()) {
                 Microbot.log("Bars withdrawal completed - Inventory count: " + Rs2Inventory.count(barName));
+                Microbot.log("BAR WITHDRAWAL SUCCESS: Now have " + Rs2Inventory.count(barName) + " " + barName + " in inventory");
             }
         } else {
             updateStatus("No bars to withdraw or inventory full");
+            if (config.enableDebugLogs()) {
+                Microbot.log("BAR WITHDRAWAL FAILED: barsToWithdraw = " + barsToWithdraw);
+                Microbot.log("  Reasons: barsInBank=" + barsInBank + ", maxBarsToWithdraw=" + maxBarsToWithdraw);
+                Microbot.log("  Inventory full? " + Rs2Inventory.isFull());
+            }
         }
     }
 
@@ -1635,6 +1876,35 @@ public class AIOMetalWorkerScript extends Script {
                 currentPhase = ProcessPhase.COMPLETE;
             }
             updateStatus("Smelting start mode - Next phase: " + currentPhase);
+            return;
+        }
+
+        // SMITHING START MODE FIX: Handle starting at smithing phase specially
+        if (config.startingPhase() == StartingPhase.SMITHING && config.smithItems()) {
+            String barName = config.metalType().getBarName();
+            boolean hasBarsInBank = Rs2Bank.hasItem(barName);
+            boolean hasBarsInInventory = Rs2Inventory.hasItem(barName);
+            
+            // ENHANCED DEBUG for smithing start mode troubleshooting
+            Microbot.log("=== SMITHING START MODE ANALYSIS ===");
+            Microbot.log("Bars in bank: " + hasBarsInBank + " (count: " + Rs2Bank.count(barName) + ")");
+            Microbot.log("Bars in inventory: " + hasBarsInInventory + " (count: " + Rs2Inventory.count(barName) + ")");
+            
+            if (hasBarsInInventory) {
+                updateStatus("Smithing start mode - have bars in inventory, going to anvil");
+                Microbot.log("Smithing start mode - have bars in inventory, going to anvil");
+                currentPhase = ProcessPhase.WALKING; // Walk to anvil for smithing
+            } else if (hasBarsInBank) {
+                updateStatus("Smithing start mode - have bars in bank, withdrawing bars");
+                Microbot.log("Smithing start mode - have bars in bank, withdrawing bars");
+                currentPhase = ProcessPhase.BANKING; // Stay at bank to withdraw bars
+            } else {
+                updateStatus("Smithing start mode - no bars available, banking to get pickaxe for mining");
+                Microbot.log("Smithing start mode - no bars available, banking to get pickaxe for mining");
+                currentPhase = ProcessPhase.BANKING; // Go to banking to deposit items and get pickaxe
+            }
+            updateStatus("Smithing start mode - Next phase: " + currentPhase);
+            Microbot.log("Smithing start mode - Next phase: " + currentPhase);
             return;
         }
 
@@ -1698,6 +1968,18 @@ public class AIOMetalWorkerScript extends Script {
 
     // Helper methods for banking logic
 
+    /**
+     * SMITHING START MODE FIX: Determines if we're in smithing-only mode
+     * Returns true when starting phase is SMITHING, indicating we should only work with existing bars
+     */
+    private boolean isSmithingOnlyMode() {
+        boolean isSmithingOnly = config.startingPhase() == StartingPhase.SMITHING;
+        if (config.enableDebugLogs()) {
+            Microbot.log("SMITHING-ONLY MODE CHECK: " + isSmithingOnly + " (starting phase: " + config.startingPhase() + ")");
+        }
+        return isSmithingOnly;
+    }
+
     private boolean needsCoal() {
         String[] oreNames = config.metalType().getOreNames();
         for (String ore : oreNames) {
@@ -1711,6 +1993,23 @@ public class AIOMetalWorkerScript extends Script {
     private boolean needsMoreOresForSmelting() {
         if (!config.smeltBars()) {
             return false;
+        }
+
+        // SMITHING START MODE FIX: When starting at smithing phase with no bars,
+        // don't fall back to smelting unless explicitly configured to do so
+        if (config.startingPhase() == StartingPhase.SMITHING) {
+            String barName = config.metalType().getBarName();
+            boolean hasBarsInBank = Rs2Bank.hasItem(barName);
+            boolean hasBarsInInventory = Rs2Inventory.hasItem(barName);
+            
+            // If starting at smithing and no bars exist, don't try to smelt - go to mining instead
+            if (!hasBarsInBank && !hasBarsInInventory) {
+                // ENHANCED DEBUG for smithing start mode (always log)
+                Microbot.log("=== SMITHING START MODE - Smelting Check ===");
+                Microbot.log("Starting at smithing phase with no bars available");
+                Microbot.log("Not switching to smelting - will go to mining instead");
+                return false;
+            }
         }
 
         // FIXED: Check if we've already processed the target quantity of ores for smelting
@@ -1758,7 +2057,24 @@ public class AIOMetalWorkerScript extends Script {
 
         String barName = config.metalType().getBarName();
 
-        // MYTHICAL ENHANCEMENT: Check if we have bars available in bank
+        // SMITHING START MODE FIX: Special handling for smithing starting phase
+        if (config.startingPhase() == StartingPhase.SMITHING) {
+            // For smithing start mode, only return true if bars actually exist somewhere
+            boolean hasBarsInBank = Rs2Bank.hasItem(barName);
+            boolean hasBarsInInventory = Rs2Inventory.hasItem(barName);
+            
+            // ENHANCED DEBUG for smithing start mode (always log)
+            Microbot.log("=== SMITHING START MODE - Bars Analysis ===");
+            Microbot.log("Smithing start mode enabled: true");
+            Microbot.log("Bar type: " + barName);
+            Microbot.log("Bars in bank: " + hasBarsInBank + " (count: " + Rs2Bank.count(barName) + ")");
+            Microbot.log("Bars in inventory: " + hasBarsInInventory + " (count: " + Rs2Inventory.count(barName) + ")");
+            Microbot.log("Needs bars for smithing: " + (hasBarsInBank || hasBarsInInventory));
+            
+            return hasBarsInBank || hasBarsInInventory;
+        }
+
+        // MYTHICAL ENHANCEMENT: Normal mode - Check if we have bars available in bank
         boolean hasBarsInBank = Rs2Bank.hasItem(barName);
 
         // MYTHICAL ENHANCEMENT: Also check if bars are already in inventory
@@ -3204,11 +3520,24 @@ public class AIOMetalWorkerScript extends Script {
     private WorldPoint determineWalkingDestination() {
         updateStatus("Determining walking destination for phase: " + currentPhase);
 
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== DETERMINING WALKING DESTINATION ===");
+            Microbot.log("Current phase: " + currentPhase);
+            Microbot.log("Starting phase: " + config.startingPhase());
+            Microbot.log("Progress - Ores mined: " + progress.getOresMined() + "/" + config.targetQuantity());
+            Microbot.log("Progress - Bars smelted: " + progress.getBarsSmelted() + "/" + getRequiredBars());
+            Microbot.log("Player location: " + Rs2Player.getWorldLocation());
+        }
+
         switch (currentPhase) {
             case WALKING:
                 // If we're in WALKING phase, determine where we should go based on what we need
                 // to do next
                 ProcessPhase nextPhase = determineNextPhase();
+                
+                if (config.enableDebugLogs()) {
+                    Microbot.log("WALKING DESTINATION: Next phase determined as " + nextPhase);
+                }
                 updateStatus("Walking phase - next intended phase: " + nextPhase);
 
                 switch (nextPhase) {
@@ -3248,10 +3577,16 @@ public class AIOMetalWorkerScript extends Script {
 
                     case SMITHING:
                         updateStatus("Walking to anvil for smithing");
+                        if (config.enableDebugLogs()) {
+                            Microbot.log("SMITHING DESTINATION: Walking to anvil at " + ANVIL_LOCATION);
+                        }
                         return ANVIL_LOCATION;
 
                     default:
                         updateStatus("No specific destination needed for: " + nextPhase);
+                        if (config.enableDebugLogs()) {
+                            Microbot.log("WALKING: No specific destination for phase " + nextPhase);
+                        }
                         return null;
                 }
 
