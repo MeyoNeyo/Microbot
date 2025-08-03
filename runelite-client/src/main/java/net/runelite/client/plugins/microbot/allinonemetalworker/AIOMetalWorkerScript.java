@@ -65,6 +65,10 @@ public class AIOMetalWorkerScript extends Script {
 
     // State tracking
     private int failedActionCount = 0;
+    
+    // LEVEL TRACKING: Track smithing level to only recheck when level increases
+    private int lastKnownSmithingLevel = 0;
+    private int currentSelectedItemChildId = -1; // Track currently selected smithing item
 
     public AIOMetalWorkerScript() {
         // Default constructor
@@ -648,20 +652,20 @@ public class AIOMetalWorkerScript extends Script {
                 updateStatus("EXPERT FIX: Anvil interface opened (Widget 312) - selecting best item");
                 sleep(186, 480); // Match working plugin timing
 
-                // DYNAMIC LEVEL PROGRESSION: Select best item based on CURRENT level each time
-                if (selectBestSmithingOptionDynamic()) {
-                    updateStatus("DYNAMIC: Selected smithing option based on current level - smithing in progress");
-                    System.out.println("[DEBUG] Dynamic smithing option selected, waiting for completion");
+                // LEVEL-BASED PROGRESSION: Only recheck smithing item if level has increased
+                if (selectSmithingItemOnLevelUp()) {
+                    updateStatus("LEVEL-UP: Selected smithing option - smithing full inventory");
+                    System.out.println("[DEBUG] Level-based smithing option selected, waiting for full completion");
                     
-                    // Wait for current smithing action to complete
-                    waitForSingleSmithingAction();
+                    // Wait for full smithing session to complete (all bars in inventory)
+                    waitForFullSmithingSession();
 
-                    // After each smithing action, check if we should continue with better items or bank
+                    // After full smithing session, check if we should continue or bank
                     if (hasBarsToSmith()) {
-                        updateStatus("DYNAMIC: More bars available - rechecking level for better items");
-                        // Continue smithing cycle - this will recheck level and select best item again
+                        updateStatus("LEVEL-UP: More bars available - will recheck level next cycle");
+                        // Continue smithing cycle - level will be rechecked next anvil interaction
                     } else {
-                        updateStatus("DYNAMIC: No more bars in inventory - checking bank for continuous smithing");
+                        updateStatus("LEVEL-UP: No more bars in inventory - checking bank for continuous smithing");
                         
                         // CONTINUOUS SMITHING: Check if we have smithed items and need to bank them
                         if (hasSmithedItemsToDeposit()) {
@@ -674,8 +678,8 @@ public class AIOMetalWorkerScript extends Script {
                         }
                     }
                 } else {
-                    updateStatus("DYNAMIC: Failed to select smithing option - will retry");
-                    System.out.println("[DEBUG] Failed to select dynamic smithing option");
+                    updateStatus("LEVEL-UP: Failed to select smithing option - will retry");
+                    System.out.println("[DEBUG] Failed to select level-based smithing option");
                 }
             } else {
                 updateStatus("EXPERT FIX: Anvil interface (312,1) did not appear - will retry");
@@ -1974,6 +1978,204 @@ public class AIOMetalWorkerScript extends Script {
 
         updateStatus("Smelting session complete! Remaining ores: " + finalOreCount + 
                     ", Total ores used: " + progress.getOresUsedForSmelting() + "/" + config.targetQuantity());
+    }
+
+    /**
+     * LEVEL-UP OPTIMIZATION: Selects smithing option only when smithing level has increased
+     * This method checks if the player's smithing level has gone up since the last check,
+     * and only then selects a better smithing item. Otherwise, uses the previously selected item.
+     * 
+     * @return true if option was successfully selected
+     */
+    private boolean selectSmithingItemOnLevelUp() {
+        try {
+            updateStatus("LEVEL-UP: Waiting for anvil interface (Widget 312) with level-up checking...");
+            System.out.println("[DEBUG] Level-up smithing - checking for anvil interface widget 312,1");
+            
+            // Use specific widget ID like working Varrock plugin (312 = anvil interface)
+            boolean interfaceFound = sleepUntil(() -> {
+                boolean hasWidget = Rs2Widget.getWidget(312, 1) != null;
+                if (!hasWidget) {
+                    System.out.println("[DEBUG] Level-up - waiting for anvil interface...");
+                } else {
+                    System.out.println("[DEBUG] Level-up - anvil interface detected!");
+                }
+                return hasWidget;
+            }, 10000);
+            
+            if (!interfaceFound) {
+                updateStatus("LEVEL-UP: Anvil interface (312,1) not detected - retrying anvil interaction");
+                System.out.println("[DEBUG] Level-up - failed to find anvil interface widget 312,1 after 10 seconds");
+                return false;
+            }
+
+            sleep(186, 480); // Match working plugin timing
+
+            // LEVEL-UP CHECK: Get current smithing level and compare with last known level
+            int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
+            int availableBars = Rs2Inventory.count(config.metalType().getBarName());
+            String metalType = config.metalType().getDisplayName().toLowerCase();
+
+            updateStatus("LEVEL-UP: Current Level: " + currentSmithingLevel + ", Last Known: " + lastKnownSmithingLevel + ", Bars: " + availableBars);
+            System.out.println("[DEBUG] LEVEL-UP CHECK - Current: " + currentSmithingLevel + ", Last: " + lastKnownSmithingLevel + ", Bars: " + availableBars);
+
+            // LEVEL-UP: Set quantity to "All" first
+            int currentVarbit = Microbot.getVarbitPlayerValue(2224);
+            System.out.println("[DEBUG] Level-up - current varbit 2224 value: " + currentVarbit + ", available bars: " + availableBars);
+            
+            if (currentVarbit < availableBars) {
+                updateStatus("LEVEL-UP: Setting quantity to 'All' (Widget 312,7)");
+                System.out.println("[DEBUG] Level-up - clicking 'All' button at widget 312,7");
+                Rs2Widget.clickWidget(312, 7);
+                sleep(186, 480);
+            }
+
+            // LEVEL-UP LOGIC: Only select new item if level has increased OR if no item selected yet
+            int itemChildId;
+            if (currentSmithingLevel > lastKnownSmithingLevel || currentSelectedItemChildId == -1) {
+                // Level has increased or first time - select best item for new level
+                updateStatus("LEVEL-UP: Level increased from " + lastKnownSmithingLevel + " to " + currentSmithingLevel + " - selecting better item!");
+                System.out.println("[DEBUG] LEVEL-UP - Level increased! Selecting new best item for level " + currentSmithingLevel);
+                
+                itemChildId = getBestSmithingItemChildIdDynamic(metalType, currentSmithingLevel, availableBars);
+                
+                if (itemChildId != -1) {
+                    // Update tracking variables
+                    lastKnownSmithingLevel = currentSmithingLevel;
+                    currentSelectedItemChildId = itemChildId;
+                    updateStatus("LEVEL-UP: Selected new item for level " + currentSmithingLevel + " (Widget 312," + itemChildId + ")");
+                    System.out.println("[DEBUG] LEVEL-UP - New item selected: widget 312," + itemChildId + " for level " + currentSmithingLevel);
+                } else {
+                    updateStatus("LEVEL-UP: No suitable items found for level " + currentSmithingLevel);
+                    System.out.println("[DEBUG] LEVEL-UP - No suitable items found for level " + currentSmithingLevel);
+                    return false;
+                }
+            } else {
+                // Level hasn't increased - use previously selected item
+                itemChildId = currentSelectedItemChildId;
+                updateStatus("LEVEL-UP: Level unchanged (" + currentSmithingLevel + ") - using previously selected item (Widget 312," + itemChildId + ")");
+                System.out.println("[DEBUG] LEVEL-UP - Level unchanged, using previous item: widget 312," + itemChildId);
+                
+                if (itemChildId == -1) {
+                    // Fallback: select best item if no previous selection
+                    updateStatus("LEVEL-UP: No previous selection - selecting best item for level " + currentSmithingLevel);
+                    itemChildId = getBestSmithingItemChildIdDynamic(metalType, currentSmithingLevel, availableBars);
+                    if (itemChildId != -1) {
+                        lastKnownSmithingLevel = currentSmithingLevel;
+                        currentSelectedItemChildId = itemChildId;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+
+            // Click the selected smithing item
+            updateStatus("LEVEL-UP: Clicking smithing item at child ID: " + itemChildId);
+            System.out.println("[DEBUG] Level-up - clicking widget 312," + itemChildId);
+
+            boolean itemSelected = Rs2Widget.clickWidget(312, itemChildId);
+            
+            if (itemSelected) {
+                updateStatus("LEVEL-UP: Successfully selected smithing item (Widget 312," + itemChildId + ") for level " + currentSmithingLevel);
+                System.out.println("[DEBUG] Level-up - successfully clicked widget 312," + itemChildId + " for level " + currentSmithingLevel);
+                sleep(186, 480); // Match working plugin timing
+                return true;
+            } else {
+                updateStatus("LEVEL-UP: Failed to click smithing item at child ID: " + itemChildId);
+                System.out.println("[DEBUG] Level-up - failed to click widget 312," + itemChildId);
+                return false;
+            }
+
+        } catch (Exception e) {
+            handleError("LEVEL-UP: Failed to select smithing option", e);
+            System.out.println("[DEBUG] Level-up - exception in selectSmithingItemOnLevelUp: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * LEVEL-UP OPTIMIZATION: Waits for full smithing session to complete
+     * Waits until all bars in inventory are smithed, rather than stopping after each action
+     */
+    private void waitForFullSmithingSession() {
+        updateStatus("LEVEL-UP: Waiting for full smithing session to complete...");
+        long sessionStartTime = System.currentTimeMillis();
+        int initialBarCount = Rs2Inventory.count(config.metalType().getBarName());
+        
+        // Track initial inventory for item counting
+        Map<String, Integer> initialInventory = getCurrentInventorySnapshot();
+        boolean smithingInProgress = true;
+
+        System.out.println("[DEBUG] LEVEL-UP - Starting full smithing session with " + initialBarCount + " bars");
+
+        while (smithingInProgress && (System.currentTimeMillis() - sessionStartTime < 300000)) { // 5 minutes max per session
+            // Check if still smithing (player animating or bars being consumed)
+            int currentBarCount = Rs2Inventory.count(config.metalType().getBarName());
+            
+            if (currentBarCount == 0) {
+                updateStatus("LEVEL-UP: All bars smithed - session complete!");
+                System.out.println("[DEBUG] LEVEL-UP - All bars consumed, session complete");
+                smithingInProgress = false;
+                break;
+            }
+            
+            // Wait for XP drops to track progress
+            if (Rs2Player.waitForXpDrop(Skill.SMITHING, 3000)) {
+                updateStatus("LEVEL-UP: Smithing XP drop detected - progress continues...");
+                System.out.println("[DEBUG] LEVEL-UP - XP drop detected, bars remaining: " + currentBarCount);
+                
+                // Count items created this session
+                Map<String, Integer> currentInventory = getCurrentInventorySnapshot();
+                int newItemsCreated = countNewItemsCreated(initialInventory, currentInventory);
+                
+                if (newItemsCreated > 0) {
+                    for (int i = 0; i < newItemsCreated; i++) {
+                        progress.incrementItemsSmithed();
+                    }
+                    updateStatus("LEVEL-UP: Created " + newItemsCreated + " items! Total: " + progress.getItemsSmithed() + ", Bars remaining: " + currentBarCount);
+                    
+                    // Update initial inventory for next comparison
+                    initialInventory = currentInventory;
+                }
+            }
+            
+            // Check if smithing animation stopped but still have bars
+            if (!Rs2Player.isAnimating() && !Rs2Player.isMoving() && currentBarCount > 0) {
+                // Check if bars decreased since last check
+                if (currentBarCount < initialBarCount) {
+                    updateStatus("LEVEL-UP: Progress made - bars: " + initialBarCount + " -> " + currentBarCount);
+                    initialBarCount = currentBarCount;
+                } else {
+                    // No progress for a while - session might be stuck
+                    updateStatus("LEVEL-UP: No progress detected - checking if session is complete");
+                    sleep(1000, 1500);
+                    
+                    // Double-check bar count after waiting
+                    int recheckBarCount = Rs2Inventory.count(config.metalType().getBarName());
+                    if (recheckBarCount == 0) {
+                        smithingInProgress = false;
+                        break;
+                    } else if (recheckBarCount == currentBarCount) {
+                        // No change - might be done smithing
+                        updateStatus("LEVEL-UP: No bar consumption detected - session may be complete");
+                        smithingInProgress = false;
+                        break;
+                    }
+                }
+            }
+
+            // Brief sleep between checks
+            sleep(500, 800);
+        }
+
+        if (smithingInProgress) {
+            updateStatus("LEVEL-UP: Session timeout - proceeding anyway");
+            System.out.println("[DEBUG] LEVEL-UP - Session timeout after 5 minutes");
+        }
+
+        int finalBarCount = Rs2Inventory.count(config.metalType().getBarName());
+        updateStatus("LEVEL-UP: Smithing session complete! Bars: " + initialBarCount + " -> " + finalBarCount);
+        System.out.println("[DEBUG] LEVEL-UP - Full smithing session completed, bars remaining: " + finalBarCount);
     }
 
     /**
