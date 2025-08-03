@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.allinonemetalworker;
 
 import net.runelite.client.config.*;
 import net.runelite.client.plugins.microbot.allinonemetalworker.enums.MetalType;
+import net.runelite.client.plugins.microbot.allinonemetalworker.enums.StartingPhase;
 
 /**
  * Configuration interface for the All-in-One Metal Worker plugin.
@@ -201,6 +202,17 @@ public interface AIOMetalWorkerConfig extends Config {
     )
     default boolean showDetailedOverlay() {
         return true;
+    }
+
+    @ConfigItem(
+            keyName = "startingPhase",
+            name = "Starting Phase",
+            description = "Choose which phase to start at (for debugging). MINING = normal start, SMELTING = start with smelting (for testing smelting fixes).",
+            position = 2,
+            section = debugSection
+    )
+    default StartingPhase startingPhase() {
+        return StartingPhase.MINING;
     }
 
     // Additional methods for script functionality

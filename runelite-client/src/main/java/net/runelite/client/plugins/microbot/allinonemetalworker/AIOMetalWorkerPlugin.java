@@ -96,11 +96,46 @@ public class AIOMetalWorkerPlugin extends Plugin {
         log.info("AIO Metal Worker Plugin shutting down...");
         
         try {
-            // Stop the script first
+            // Stop the script first with proper cleanup
             if (script != null) {
+                log.info("Stopping AIO Metal Worker script...");
                 script.shutdown();
-                // Give the script time to stop gracefully
-                Thread.sleep(1000);
+                
+                // Wait for script to stop gracefully, check multiple times
+                int maxWaitAttempts = 15; // Increased from 10 to 15 for more time
+                int waitAttempts = 0;
+                while (script.isRunning() && waitAttempts < maxWaitAttempts) {
+                    try {
+                        Thread.sleep(200);
+                        waitAttempts++;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                
+                if (script.isRunning()) {
+                    log.warn("Script did not stop gracefully after 3 seconds, forcing additional cleanup");
+                    
+                    // Force additional walker cleanup if script is still running
+                    try {
+                        net.runelite.client.plugins.microbot.util.walker.Rs2Walker.setTarget(null);
+                        net.runelite.client.plugins.microbot.shortestpath.ShortestPathPlugin.exit();
+                        log.info("Forced walker cleanup completed");
+                    } catch (Exception walkerEx) {
+                        log.warn("Error during forced walker cleanup: " + walkerEx.getMessage());
+                    }
+                } else {
+                    log.info("Script stopped successfully");
+                }
+            }
+            
+            // Additional cleanup - ensure walker is completely stopped
+            try {
+                net.runelite.client.plugins.microbot.util.walker.Rs2Walker.setTarget(null);
+                log.info("Final walker cleanup completed");
+            } catch (Exception finalWalkerEx) {
+                log.warn("Error during final walker cleanup: " + finalWalkerEx.getMessage());
             }
             
             // Remove overlay
