@@ -305,13 +305,13 @@ public class AIOMetalWorkerScript extends Script {
         WorldPoint playerLocation = Rs2Player.getWorldLocation();
 
         // First check if we're near any known mining areas
-        if (playerLocation.distanceTo(LUMBRIDGE_MINING_AREA) <= MINING_RADIUS) {
-            updateStatus("Detected location: Lumbridge mining area");
-            return LUMBRIDGE_MINING_AREA;
-        }
         if (playerLocation.distanceTo(AL_KHARID_MINING_AREA) <= MINING_RADIUS) {
             updateStatus("Detected location: Al Kharid mining area");
             return AL_KHARID_MINING_AREA;
+        }
+        if (playerLocation.distanceTo(LUMBRIDGE_MINING_AREA) <= MINING_RADIUS) {
+            updateStatus("Detected location: Lumbridge mining area");
+            return LUMBRIDGE_MINING_AREA;
         }
 
         // If not near known areas, check if there are suitable ores nearby
@@ -330,8 +330,8 @@ public class AIOMetalWorkerScript extends Script {
      */
     private WorldPoint getClosestMiningArea(WorldPoint playerLocation) {
         WorldPoint[] knownAreas = {
-                LUMBRIDGE_MINING_AREA,
                 AL_KHARID_MINING_AREA,
+                LUMBRIDGE_MINING_AREA,
                 new WorldPoint(3183, 3376, 0), // Varrock East mine
                 new WorldPoint(3146, 3149, 0), // Lumbridge Swamp East mine
                 new WorldPoint(3289, 3365, 0) // Al Kharid mine north
