@@ -648,20 +648,20 @@ public class AIOMetalWorkerScript extends Script {
                 updateStatus("EXPERT FIX: Anvil interface opened (Widget 312) - selecting best item");
                 sleep(186, 480); // Match working plugin timing
 
-                // EXPERT FIX: Select the best available item using widget child IDs
-                if (selectBestSmithingOption()) {
-                    updateStatus("EXPERT FIX: Selected smithing option - smithing in progress");
-                    System.out.println("[DEBUG] Smithing option selected successfully, waiting for completion");
+                // DYNAMIC LEVEL PROGRESSION: Select best item based on CURRENT level each time
+                if (selectBestSmithingOptionDynamic()) {
+                    updateStatus("DYNAMIC: Selected smithing option based on current level - smithing in progress");
+                    System.out.println("[DEBUG] Dynamic smithing option selected, waiting for completion");
                     
-                    // Wait for smithing to complete
-                    waitForSmithing();
+                    // Wait for current smithing action to complete
+                    waitForSingleSmithingAction();
 
-                    // After smithing, check if we should continue or go to bank
+                    // After each smithing action, check if we should continue with better items or bank
                     if (hasBarsToSmith()) {
-                        updateStatus("EXPERT FIX: More bars available - continuing smithing");
-                        // Continue smithing cycle
+                        updateStatus("DYNAMIC: More bars available - rechecking level for better items");
+                        // Continue smithing cycle - this will recheck level and select best item again
                     } else {
-                        updateStatus("EXPERT FIX: No more bars in inventory - checking bank for continuous smithing");
+                        updateStatus("DYNAMIC: No more bars in inventory - checking bank for continuous smithing");
                         
                         // CONTINUOUS SMITHING: Check if we have smithed items and need to bank them
                         if (hasSmithedItemsToDeposit()) {
@@ -674,8 +674,8 @@ public class AIOMetalWorkerScript extends Script {
                         }
                     }
                 } else {
-                    updateStatus("EXPERT FIX: Failed to select smithing option - will retry");
-                    System.out.println("[DEBUG] Failed to select smithing option");
+                    updateStatus("DYNAMIC: Failed to select smithing option - will retry");
+                    System.out.println("[DEBUG] Failed to select dynamic smithing option");
                 }
             } else {
                 updateStatus("EXPERT FIX: Anvil interface (312,1) did not appear - will retry");
@@ -1977,7 +1977,90 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * EXPERT FIX: Selects the best available smithing option using proven Varrock Anvil approach
+     * DYNAMIC LEVEL PROGRESSION: Selects smithing option with real-time level checking
+     * This method checks the current smithing level EVERY TIME it's called, allowing
+     * for progressive item upgrades as the player levels up during smithing sessions
+     * 
+     * @return true if option was successfully selected
+     */
+    private boolean selectBestSmithingOptionDynamic() {
+        try {
+            updateStatus("DYNAMIC: Waiting for anvil interface (Widget 312) with real-time level check...");
+            System.out.println("[DEBUG] Dynamic smithing - checking for anvil interface widget 312,1");
+            
+            // Use specific widget ID like working Varrock plugin (312 = anvil interface)
+            boolean interfaceFound = sleepUntil(() -> {
+                boolean hasWidget = Rs2Widget.getWidget(312, 1) != null;
+                if (!hasWidget) {
+                    System.out.println("[DEBUG] Dynamic - waiting for anvil interface...");
+                } else {
+                    System.out.println("[DEBUG] Dynamic - anvil interface detected!");
+                }
+                return hasWidget;
+            }, 10000);
+            
+            if (!interfaceFound) {
+                updateStatus("DYNAMIC: Anvil interface (312,1) not detected - retrying anvil interaction");
+                System.out.println("[DEBUG] Dynamic - failed to find anvil interface widget 312,1 after 10 seconds");
+                return false;
+            }
+
+            sleep(186, 480); // Match working plugin timing
+
+            // DYNAMIC CHECK: Get current smithing level and available bars FRESH each time
+            int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
+            int availableBars = Rs2Inventory.count(config.metalType().getBarName());
+            String metalType = config.metalType().getDisplayName().toLowerCase();
+
+            updateStatus("DYNAMIC: Anvil interface detected! Current Level: " + currentSmithingLevel + ", Bars: " + availableBars + ", Metal: " + metalType);
+            System.out.println("[DEBUG] DYNAMIC CHECK - Smithing level: " + currentSmithingLevel + ", Available bars: " + availableBars + ", Metal: " + metalType);
+
+            // DYNAMIC: Select "All" quantity first (like working plugin does)
+            int currentVarbit = Microbot.getVarbitPlayerValue(2224);
+            System.out.println("[DEBUG] Dynamic - current varbit 2224 value: " + currentVarbit + ", available bars: " + availableBars);
+            
+            if (currentVarbit < availableBars) {
+                updateStatus("DYNAMIC: Setting quantity to 'All' (Widget 312,7)");
+                System.out.println("[DEBUG] Dynamic - clicking 'All' button at widget 312,7");
+                Rs2Widget.clickWidget(312, 7);
+                sleep(186, 480);
+            }
+
+            // DYNAMIC: Get the best smithing item child ID based on CURRENT level and bars
+            int itemChildId = getBestSmithingItemChildIdDynamic(metalType, currentSmithingLevel, availableBars);
+            
+            if (itemChildId == -1) {
+                updateStatus("DYNAMIC: No suitable smithing items found for current level " + currentSmithingLevel);
+                System.out.println("[DEBUG] Dynamic - no suitable items found for level " + currentSmithingLevel + " with " + availableBars + " bars");
+                return false;
+            }
+
+            updateStatus("DYNAMIC: Clicking best smithing item for level " + currentSmithingLevel + " at child ID: " + itemChildId);
+            System.out.println("[DEBUG] Dynamic - clicking widget 312," + itemChildId + " for level " + currentSmithingLevel);
+
+            // DYNAMIC: Click the specific widget child ID
+            boolean itemSelected = Rs2Widget.clickWidget(312, itemChildId);
+            
+            if (itemSelected) {
+                updateStatus("DYNAMIC: Successfully selected smithing item for level " + currentSmithingLevel + " (Widget 312," + itemChildId + ")");
+                System.out.println("[DEBUG] Dynamic - successfully clicked widget 312," + itemChildId + " for level " + currentSmithingLevel);
+                sleep(186, 480); // Match working plugin timing
+                return true;
+            } else {
+                updateStatus("DYNAMIC: Failed to click smithing item at child ID: " + itemChildId);
+                System.out.println("[DEBUG] Dynamic - failed to click widget 312," + itemChildId);
+                return false;
+            }
+
+        } catch (Exception e) {
+            handleError("DYNAMIC: Failed to select smithing option", e);
+            System.out.println("[DEBUG] Dynamic - exception in selectBestSmithingOptionDynamic: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * EXPERT FIX: Selects smithing option using proven Varrock Anvil approach
      * Uses specific widget IDs and proper anvil interface detection like working plugin
      * 
      * @return true if option was successfully selected
@@ -2057,6 +2140,268 @@ public class AIOMetalWorkerScript extends Script {
             System.out.println("[DEBUG] Exception in selectBestSmithingOption: " + e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * DYNAMIC LEVEL PROGRESSION: Gets the widget child ID for the best smithing item with real-time level checking
+     * This method evaluates the CURRENT smithing level each time to select progressively better items
+     * Based on actual RuneScape smithing levels and progressive bar usage optimization
+     */
+    private int getBestSmithingItemChildIdDynamic(String metalType, int smithingLevel, int availableBars) {
+        updateStatus("DYNAMIC: Determining best smithing item for " + metalType + " (level " + smithingLevel + ")");
+        System.out.println("[DEBUG] DYNAMIC SELECTION - Metal: " + metalType + ", Level: " + smithingLevel + ", Bars: " + availableBars);
+        System.out.println("[DEBUG] DYNAMIC - Real-time smithing level check: " + Rs2Player.getRealSkillLevel(Skill.SMITHING));
+
+        // DYNAMIC LEVEL-AWARE PROGRESSION: Use actual RuneScape smithing level requirements
+        // Progressive item selection - items that use more bars are better for efficiency
+        // Listed in order of preference (most bars first) with CORRECT level requirements
+        
+        String metalTypeLower = metalType.toLowerCase();
+        System.out.println("[DEBUG] DYNAMIC - Metal type (lowercase): '" + metalTypeLower + "'");
+        
+        if (metalTypeLower.equals("iron")) {
+            // Iron items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 33 && availableBars >= 5) { // Iron platebody requires level 33
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Platebody (5 bars, level 33) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 31 && availableBars >= 3) { // Iron platelegs requires level 31
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Platelegs (3 bars, level 31) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 31 && availableBars >= 3) { // Iron plateskirt requires level 31
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Plateskirt (3 bars, level 31) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 29 && availableBars >= 3) { // Iron 2h sword requires level 29
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron 2H Sword (3 bars, level 29) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 25 && availableBars >= 3) { // Iron battleaxe requires level 25
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Battleaxe (3 bars, level 25) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 21 && availableBars >= 2) { // Iron longsword requires level 21
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Longsword (2 bars, level 21) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 20 && availableBars >= 2) { // Iron scimitar requires level 20
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Scimitar (2 bars, level 20) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 16 && availableBars >= 1) { // Iron axe requires level 16
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Axe (1 bar, level 16) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 15 && availableBars >= 1) { // Iron dagger requires level 15
+                System.out.println("[DEBUG] DYNAMIC - Selected Iron Dagger (1 bar, level 15) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("steel")) {
+            // Steel items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 48 && availableBars >= 5) { // Steel platebody requires level 48
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Platebody (5 bars, level 48) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 46 && availableBars >= 3) { // Steel platelegs requires level 46
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Platelegs (3 bars, level 46) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 46 && availableBars >= 3) { // Steel plateskirt requires level 46
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Plateskirt (3 bars, level 46) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 44 && availableBars >= 3) { // Steel 2h sword requires level 44
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel 2H Sword (3 bars, level 44) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 40 && availableBars >= 3) { // Steel battleaxe requires level 40
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Battleaxe (3 bars, level 40) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 36 && availableBars >= 2) { // Steel longsword requires level 36
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Longsword (2 bars, level 36) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 35 && availableBars >= 2) { // Steel scimitar requires level 35
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Scimitar (2 bars, level 35) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 31 && availableBars >= 1) { // Steel axe requires level 31
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Axe (1 bar, level 31) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 30 && availableBars >= 1) { // Steel dagger requires level 30
+                System.out.println("[DEBUG] DYNAMIC - Selected Steel Dagger (1 bar, level 30) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("mithril")) {
+            // Mithril items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 68 && availableBars >= 5) { // Mithril platebody requires level 68
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Platebody (5 bars, level 68) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril platelegs requires level 66
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Platelegs (3 bars, level 66) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril plateskirt requires level 66
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Plateskirt (3 bars, level 66) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 64 && availableBars >= 3) { // Mithril 2h sword requires level 64
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril 2H Sword (3 bars, level 64) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 60 && availableBars >= 3) { // Mithril battleaxe requires level 60
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Battleaxe (3 bars, level 60) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 56 && availableBars >= 2) { // Mithril longsword requires level 56
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Longsword (2 bars, level 56) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 55 && availableBars >= 2) { // Mithril scimitar requires level 55
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Scimitar (2 bars, level 55) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 51 && availableBars >= 1) { // Mithril axe requires level 51
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Axe (1 bar, level 51) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 50 && availableBars >= 1) { // Mithril dagger requires level 50
+                System.out.println("[DEBUG] DYNAMIC - Selected Mithril Dagger (1 bar, level 50) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("adamant")) {
+            // Adamant items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 88 && availableBars >= 5) { // Adamant platebody requires level 88
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Platebody (5 bars, level 88) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 86 && availableBars >= 3) { // Adamant platelegs requires level 86
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Platelegs (3 bars, level 86) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 86 && availableBars >= 3) { // Adamant plateskirt requires level 86
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Plateskirt (3 bars, level 86) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 84 && availableBars >= 3) { // Adamant 2h sword requires level 84
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant 2H Sword (3 bars, level 84) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 80 && availableBars >= 3) { // Adamant battleaxe requires level 80
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Battleaxe (3 bars, level 80) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 76 && availableBars >= 2) { // Adamant longsword requires level 76
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Longsword (2 bars, level 76) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 75 && availableBars >= 2) { // Adamant scimitar requires level 75
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Scimitar (2 bars, level 75) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 71 && availableBars >= 1) { // Adamant axe requires level 71
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Axe (1 bar, level 71) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 70 && availableBars >= 1) { // Adamant dagger requires level 70
+                System.out.println("[DEBUG] DYNAMIC - Selected Adamant Dagger (1 bar, level 70) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("rune")) {
+            // Rune items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 99 && availableBars >= 5) { // Rune platebody requires level 99
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Platebody (5 bars, level 99) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 96 && availableBars >= 3) { // Rune platelegs requires level 96
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Platelegs (3 bars, level 96) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 96 && availableBars >= 3) { // Rune plateskirt requires level 96
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Plateskirt (3 bars, level 96) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 94 && availableBars >= 3) { // Rune 2h sword requires level 94
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune 2H Sword (3 bars, level 94) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 90 && availableBars >= 3) { // Rune battleaxe requires level 90
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Battleaxe (3 bars, level 90) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 91 && availableBars >= 2) { // Rune longsword requires level 91
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Longsword (2 bars, level 91) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 90 && availableBars >= 2) { // Rune scimitar requires level 90
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Scimitar (2 bars, level 90) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 86 && availableBars >= 1) { // Rune axe requires level 86
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Axe (1 bar, level 86) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 85 && availableBars >= 1) { // Rune dagger requires level 85
+                System.out.println("[DEBUG] DYNAMIC - Selected Rune Dagger (1 bar, level 85) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("bronze")) {
+            // Bronze items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 18 && availableBars >= 5) { // Bronze platebody requires level 18
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Platebody (5 bars, level 18) for level " + smithingLevel);
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze platelegs requires level 16
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Platelegs (3 bars, level 16) for level " + smithingLevel);
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze plateskirt requires level 16
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Plateskirt (3 bars, level 16) for level " + smithingLevel);
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 14 && availableBars >= 3) { // Bronze 2h sword requires level 14
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze 2H Sword (3 bars, level 14) for level " + smithingLevel);
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 10 && availableBars >= 3) { // Bronze battleaxe requires level 10
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Battleaxe (3 bars, level 10) for level " + smithingLevel);
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 6 && availableBars >= 2) { // Bronze longsword requires level 6
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Longsword (2 bars, level 6) for level " + smithingLevel);
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 5 && availableBars >= 2) { // Bronze scimitar requires level 5
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Scimitar (2 bars, level 5) for level " + smithingLevel);
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 1 && availableBars >= 1) { // Bronze axe requires level 1
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Axe (1 bar, level 1) for level " + smithingLevel);
+                return 14; // Axe (1 bar)
+            }
+            if (smithingLevel >= 1 && availableBars >= 1) { // Bronze dagger requires level 1
+                System.out.println("[DEBUG] DYNAMIC - Selected Bronze Dagger (1 bar, level 1) for level " + smithingLevel);
+                return 9; // Dagger (1 bar)
+            }
+        }
+
+        // Fallback: if no specific items available, try basic items
+        if (availableBars >= 1) {
+            System.out.println("[DEBUG] DYNAMIC - Fallback to basic item for level " + smithingLevel);
+            return 9; // Dagger (basic fallback)
+        }
+
+        System.out.println("[DEBUG] DYNAMIC - No suitable items found for " + metalType + " level " + smithingLevel + " with " + availableBars + " bars");
+        return -1; // No suitable item found
     }
 
     /**
@@ -2429,6 +2774,77 @@ public class AIOMetalWorkerScript extends Script {
         }
         
         return newItemsCount;
+    }
+
+    /**
+     * DYNAMIC LEVEL PROGRESSION: Waits for a single smithing action to complete
+     * This allows for real-time level checking after each smithing action, enabling
+     * progressive item upgrades as the player levels up during smithing sessions
+     */
+    private void waitForSingleSmithingAction() {
+        updateStatus("DYNAMIC: Waiting for single smithing action to complete...");
+        long actionStartTime = System.currentTimeMillis();
+        int initialBarCount = Rs2Inventory.count(config.metalType().getBarName());
+        
+        // Track initial inventory for item counting
+        Map<String, Integer> initialInventory = getCurrentInventorySnapshot();
+        boolean expectingXPDrop = true;
+        boolean actionCompleted = false;
+
+        System.out.println("[DEBUG] DYNAMIC - Starting single smithing action wait with " + initialBarCount + " bars");
+
+        while (!actionCompleted && (System.currentTimeMillis() - actionStartTime < 60000)) { // 1 minute max per action
+            // Wait for XP drop to indicate smithing action completed
+            if (expectingXPDrop && Rs2Player.waitForXpDrop(Skill.SMITHING, 7500)) {
+                updateStatus("DYNAMIC: Smithing XP drop detected - single action completed!");
+                System.out.println("[DEBUG] DYNAMIC - XP drop detected, single action completed");
+                
+                // Count actual items created (not bars used)
+                Map<String, Integer> currentInventory = getCurrentInventorySnapshot();
+                int newItemsCreated = countNewItemsCreated(initialInventory, currentInventory);
+                
+                if (newItemsCreated > 0) {
+                    for (int i = 0; i < newItemsCreated; i++) {
+                        progress.incrementItemsSmithed();
+                    }
+                    updateStatus("DYNAMIC: Created " + newItemsCreated + " new items! Total: " + progress.getItemsSmithed());
+                    System.out.println("[DEBUG] DYNAMIC - Created " + newItemsCreated + " items, total: " + progress.getItemsSmithed());
+                }
+                
+                actionCompleted = true;
+                break;
+            }
+
+            // Check if smithing animation stopped (action may be complete)
+            if (!Rs2Player.isAnimating() && !Rs2Player.isMoving()) {
+                // Check if bar count changed (indicating smithing occurred)
+                int currentBarCount = Rs2Inventory.count(config.metalType().getBarName());
+                if (currentBarCount != initialBarCount) {
+                    updateStatus("DYNAMIC: Bar count changed - single action completed (bars: " + initialBarCount + " -> " + currentBarCount + ")");
+                    System.out.println("[DEBUG] DYNAMIC - Bar count changed from " + initialBarCount + " to " + currentBarCount);
+                    actionCompleted = true;
+                    break;
+                }
+                
+                // If no bars left, action is definitely complete
+                if (currentBarCount == 0) {
+                    updateStatus("DYNAMIC: No bars remaining - action completed");
+                    System.out.println("[DEBUG] DYNAMIC - No bars remaining, action completed");
+                    actionCompleted = true;
+                    break;
+                }
+            }
+
+            // Brief sleep between checks
+            sleep(200, 400);
+        }
+
+        if (!actionCompleted) {
+            updateStatus("DYNAMIC: Single action timeout - proceeding anyway");
+            System.out.println("[DEBUG] DYNAMIC - Single action timeout after 60 seconds");
+        }
+
+        System.out.println("[DEBUG] DYNAMIC - Single smithing action wait completed");
     }
 
     private void waitForSmithing() {
