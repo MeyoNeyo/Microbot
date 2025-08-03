@@ -969,6 +969,17 @@ public class AIOMetalWorkerScript extends Script {
                         withdrawBarsForSmithing();
                         Rs2Bank.closeBank();
                         sleep(500, 800);
+                        
+                        // CRITICAL: Verify we have bars after withdrawal
+                        if (hasBarsToSmith()) {
+                            updateStatus("Successfully withdrew bars - proceeding to anvil");
+                            if (config.enableDebugLogs()) {
+                                Microbot.log("SMITHING TRANSITION: Bars in inventory: " + 
+                                           Rs2Inventory.count(config.metalType().getBarName()));
+                            }
+                        } else {
+                            updateStatus("WARNING: No bars in inventory after withdrawal!");
+                        }
                     }
 
                     currentPhase = ProcessPhase.WALKING; // Will walk to anvil
@@ -1223,7 +1234,7 @@ public class AIOMetalWorkerScript extends Script {
 
     /**
      * Withdraws ores needed for smelting
-     * NEW LOGIC: Takes all target ores for smelting, not based on bar requirements
+     * FIXED: Now properly withdraws target quantity amount of ores
      */
     private void withdrawOresForSmelting() {
         updateStatus("Withdrawing ores for smelting...");
@@ -1233,10 +1244,9 @@ public class AIOMetalWorkerScript extends Script {
 
         updateStatus("Available inventory slots: " + availableSlots);
 
-        // NEW APPROACH: Calculate remaining ores based on target quantity and ores
-        // already used for smelting
+        // Calculate how many ores we still need to smelt
         int targetQuantity = config.targetQuantity();
-        int oresUsedForSmelting = progress.getOresUsedForSmelting(); // Track ores used, not bars made
+        int oresUsedForSmelting = progress.getOresUsedForSmelting();
         int remainingOresNeeded = Math.max(0, targetQuantity - oresUsedForSmelting);
 
         updateStatus("Target ore quantity: " + targetQuantity + ", Used for smelting: " + oresUsedForSmelting
@@ -1248,27 +1258,35 @@ public class AIOMetalWorkerScript extends Script {
             return;
         }
 
-        // Limit to what we can carry in this trip
-        int oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
-
         // For simple metals like iron, just withdraw what we need or can carry
         if (oreNames.length == 1) {
             String oreName = oreNames[0];
-            // Take as many ores as possible up to what we need
-            int oresToWithdraw = Math.min(oresToWithdrawThisTrip, Rs2Bank.count(oreName));
+            
+            // Calculate how many ores to withdraw this trip
+            int oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
+            int oresInBank = Rs2Bank.count(oreName);
+            int oresToWithdraw = Math.min(oresToWithdrawThisTrip, oresInBank);
 
             updateStatus("Withdrawing " + oresToWithdraw + " " + oreName + " for smelting (remaining target: "
                     + remainingOresNeeded + ")");
+            
             if (oresToWithdraw > 0) {
-                Rs2Bank.withdrawX(oreName, oresToWithdraw);
+                if (oresToWithdraw == 1) {
+                    Rs2Bank.withdrawOne(oreName);
+                } else {
+                    Rs2Bank.withdrawX(oreName, oresToWithdraw);
+                }
                 sleep(600, 1000); // Wait for withdrawal
+                
+                // Don't track ores here - only track actual consumption during smelting
+                updateStatus("Withdrew " + oresToWithdraw + " ores for smelting");
             }
         } else {
-            // For alloy metals, calculate based on ratios but prioritize getting target
-            // quantity
-            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(oresToWithdrawThisTrip,
-                    availableSlots);
+            // For alloy metals (like bronze: copper + tin)
+            int oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
+            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(oresToWithdrawThisTrip, availableSlots);
 
+            int totalOresWithdrawn = 0;
             for (Map.Entry<String, Integer> entry : requiredOres.entrySet()) {
                 String oreName = entry.getKey();
                 int required = entry.getValue();
@@ -1277,9 +1295,19 @@ public class AIOMetalWorkerScript extends Script {
 
                 if (toWithdraw > 0) {
                     updateStatus("Withdrawing " + toWithdraw + " " + oreName + " for alloy smelting");
-                    Rs2Bank.withdrawX(oreName, toWithdraw);
+                    if (toWithdraw == 1) {
+                        Rs2Bank.withdrawOne(oreName);
+                    } else {
+                        Rs2Bank.withdrawX(oreName, toWithdraw);
+                    }
                     sleep(400, 700);
+                    totalOresWithdrawn += toWithdraw;
                 }
+            }
+            
+            // Don't track ores here - only track actual consumption during smelting
+            if (totalOresWithdrawn > 0) {
+                updateStatus("Withdrew " + totalOresWithdrawn + " ores for alloy smelting");
             }
         }
     }
@@ -1403,6 +1431,10 @@ public class AIOMetalWorkerScript extends Script {
             Microbot.log("Starting phase: " + config.startingPhase());
             Microbot.log("Current phase: " + currentPhase);
             Microbot.log("Has inventory space: " + (Rs2Inventory.count() < 28));
+            Microbot.log("Smithing enabled: " + config.smithItems());
+            Microbot.log("Needs bars for smithing: " + needsBarsForSmithing());
+            Microbot.log("Has bars to smith (inventory): " + hasBarsToSmith());
+            Microbot.log("All phases complete: " + allCurrentPhasesComplete());
         }
 
         // MYTHICAL LOGIC: Handle starting at smelting phase specially
@@ -1435,13 +1467,13 @@ public class AIOMetalWorkerScript extends Script {
         else if (config.smithItems() && needsBarsForSmithing()) {
             updateStatus("Target reached! Found bars in bank - moving to smithing phase");
 
-            // If we don't have bars in inventory, withdraw them
-            if (!hasBarsToSmith()) {
-                updateStatus("No bars in inventory - withdrawing bars for smithing");
-                currentPhase = ProcessPhase.BANKING; // Stay to withdraw bars
-            } else {
-                updateStatus("Have bars in inventory - going to anvil");
+            // Check if we have bars in inventory after withdrawal
+            if (hasBarsToSmith()) {
+                updateStatus("Have bars in inventory - going to anvil for smithing");
                 currentPhase = ProcessPhase.WALKING; // Walk to anvil
+            } else {
+                updateStatus("No bars in inventory - need to withdraw bars for smithing");
+                currentPhase = ProcessPhase.BANKING; // Stay to withdraw bars
             }
         }
         // Priority 3: If no bars to smith, then check if we need to smelt more bars
@@ -1460,7 +1492,12 @@ public class AIOMetalWorkerScript extends Script {
             updateStatus("Current cycle completed! All ores mined, smelted, and smithed successfully.");
             currentPhase = ProcessPhase.COMPLETE;
         }
-        // Priority 5: All tasks completed
+        // Priority 5: CRITICAL SAFETY CHECK - If we have bars in inventory, we MUST smith them
+        else if (config.smithItems() && hasBarsToSmith()) {
+            updateStatus("SAFETY: Found bars in inventory that need to be smithed!");
+            currentPhase = ProcessPhase.WALKING; // Walk to anvil to smith them
+        }
+        // Priority 6: All tasks completed
         else {
             updateStatus("All tasks completed! Ores: " + totalOresMined + "/" + targetQuantity + ", Bars: "
                     + barsSmelted + "/" + requiredBars);
@@ -1564,8 +1601,16 @@ public class AIOMetalWorkerScript extends Script {
             smeltingComplete = allTargetOresUsed || noMoreOres;
         }
 
-        // Check if smithing is complete (if enabled) - no more bars in bank to smith
-        boolean smithingComplete = !config.smithItems() || !Rs2Bank.hasItem(config.metalType().getBarName());
+        // Check if smithing is complete (if enabled) - no more bars available to smith
+        boolean smithingComplete;
+        if (!config.smithItems()) {
+            smithingComplete = true;
+        } else {
+            // Smithing is complete when there are no bars in bank AND no bars in inventory
+            boolean noBarsInBank = !Rs2Bank.hasItem(config.metalType().getBarName());
+            boolean noBarsInInventory = !Rs2Inventory.hasItem(config.metalType().getBarName());
+            smithingComplete = noBarsInBank && noBarsInInventory;
+        }
 
         if (config.enableDebugLogs()) {
             Microbot.log("=== Phase Completion Check ===");
@@ -1573,7 +1618,9 @@ public class AIOMetalWorkerScript extends Script {
                     "Ore target reached: " + oreTargetReached + " (" + totalOresMined + "/" + targetQuantity + ")");
             Microbot.log("Smelting complete: " + smeltingComplete + " (ores used: " + oresUsedForSmelting + "/"
                     + targetQuantity + ")");
-            Microbot.log("Smithing complete: " + smithingComplete + " (no more bars in bank)");
+            Microbot.log("Smithing complete: " + smithingComplete + " (no bars in bank: " + 
+                    !Rs2Bank.hasItem(config.metalType().getBarName()) + ", no bars in inventory: " + 
+                    !Rs2Inventory.hasItem(config.metalType().getBarName()) + ")");
             Microbot.log("All phases complete: " + (oreTargetReached && smeltingComplete && smithingComplete));
         }
 
@@ -1740,25 +1787,16 @@ public class AIOMetalWorkerScript extends Script {
         updateStatus("Starting smelting with " + initialOreCount + " ores in inventory");
 
         while (Rs2Player.isAnimating() || Rs2Player.isMoving()) {
-            // Check current ore count
-            int currentOreCount = 0;
-            for (String oreName : oreNames) {
-                currentOreCount += Rs2Inventory.count(oreName);
-            }
-
-            // Track ores consumed (used for smelting attempts)
-            if (currentOreCount < initialOreCount) {
-                int oresConsumed = initialOreCount - currentOreCount;
-                progress.addOresUsedForSmelting(oresConsumed);
-                updateStatus("Ores used for smelting: " + oresConsumed + " (Total used: "
-                        + progress.getOresUsedForSmelting() + ")");
-                initialOreCount = currentOreCount; // Update for next iteration
-            }
-
             // Safety timeout (5 minutes max)
             if (System.currentTimeMillis() - smeltingStartTime > 300000) {
                 handleError("Smelting timeout exceeded");
                 break;
+            }
+
+            // Check current ore count
+            int currentOreCount = 0;
+            for (String oreName : oreNames) {
+                currentOreCount += Rs2Inventory.count(oreName);
             }
 
             // Check if we're still smelting - either animating OR have ores
@@ -1776,16 +1814,18 @@ public class AIOMetalWorkerScript extends Script {
             sleep(600, 1000);
         }
 
-        // Final ore count check to catch any remaining consumed ores
+        // Final ore count check to track total ores consumed in this session
         int finalOreCount = 0;
         for (String oreName : oreNames) {
             finalOreCount += Rs2Inventory.count(oreName);
         }
 
-        if (finalOreCount < initialOreCount) {
-            int finalOresConsumed = initialOreCount - finalOreCount;
-            progress.addOresUsedForSmelting(finalOresConsumed);
-            updateStatus("Final ores consumed: " + finalOresConsumed);
+        // Calculate total ores consumed in this smelting session
+        int oresConsumedThisSession = initialOreCount - finalOreCount;
+        if (oresConsumedThisSession > 0) {
+            progress.addOresUsedForSmelting(oresConsumedThisSession);
+            updateStatus("Ores consumed this session: " + oresConsumedThisSession + 
+                        " (Total used: " + progress.getOresUsedForSmelting() + "/" + config.targetQuantity() + ")");
         }
 
         updateStatus("Smelting session complete! Total ores used: " + progress.getOresUsedForSmelting() + "/"
@@ -2315,6 +2355,36 @@ public class AIOMetalWorkerScript extends Script {
         private int miningXpGained = 0;
         private int smithingXpGained = 0;
 
+        // Getter methods
+        public Instant getStartTime() {
+            return startTime;
+        }
+
+        public int getOresMined() {
+            return oresMined;
+        }
+
+        public int getBarsSmelted() {
+            return barsSmelted;
+        }
+
+        public int getItemsSmithed() {
+            return itemsSmithed;
+        }
+
+        public int getOresUsedForSmelting() {
+            return oresUsedForSmelting;
+        }
+
+        public int getMiningXpGained() {
+            return miningXpGained;
+        }
+
+        public int getSmithingXpGained() {
+            return smithingXpGained;
+        }
+
+        // Setter methods
         public void setStartTime(Instant startTime) {
             this.startTime = startTime;
         }
