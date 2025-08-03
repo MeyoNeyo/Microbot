@@ -149,15 +149,8 @@ public class AIOMetalWorkerScript extends Script {
                     }
 
                     // Check if script is in shutdown state
-                    if (currentPhase == ProcessPhase.COMPLETE) {
-                        return;
-                    }
-
-                    // Check completion conditions first
-                    if (isTaskComplete()) {
-                        currentPhase = ProcessPhase.COMPLETE;
-                        Microbot.log("Task completed successfully!");
-                        shutdown();
+                    if (isShuttingDown) {
+                        Rs2Walker.setTarget(null);
                         return;
                     }
 
@@ -196,7 +189,7 @@ public class AIOMetalWorkerScript extends Script {
      */
     private void executeCurrentPhase() {
         // Safety check - don't execute if script is shutting down
-        if (isShuttingDown || currentPhase == ProcessPhase.COMPLETE) {
+        if (isShuttingDown) {
             return;
         }
 
@@ -222,7 +215,10 @@ public class AIOMetalWorkerScript extends Script {
                 handleErrorPhase();
                 break;
             case COMPLETE:
-                // Task is complete, script will exit
+                // This state should never be reached in continuous loop mode
+                // If it is reached, restart mining
+                updateStatus("WARNING: Unexpected COMPLETE state - restarting mining cycle");
+                currentPhase = ProcessPhase.MINING;
                 break;
         }
     }
@@ -244,8 +240,21 @@ public class AIOMetalWorkerScript extends Script {
 
         if (totalOresMined >= targetQuantity) {
             updateStatus("Target mining quantity reached! Ores mined: " + totalOresMined + "/" + targetQuantity);
-            currentPhase = ProcessPhase.BANKING; // Go to bank to proceed to next phase
-            return;
+            
+            // Check if we should start a new cycle or continue to next phase
+            if (shouldStartNewMiningCycle()) {
+                updateStatus("Cycle complete - resetting progress and starting new mining cycle");
+                // Reset progress for new cycle but keep cumulative counters
+                progress.setOresMined(0);
+                progress.setBarsSmelted(0);
+                progress.setItemsSmithed(0);
+                // Continue mining in this phase with reset counters
+                updateStatus("New cycle started - continuing mining");
+            } else {
+                // Move to next phase (banking to proceed to smelting/smithing)
+                currentPhase = ProcessPhase.BANKING;
+                return;
+            }
         }
 
         // Check if inventory is full
@@ -984,8 +993,14 @@ public class AIOMetalWorkerScript extends Script {
 
                     currentPhase = ProcessPhase.WALKING; // Will walk to anvil
                 } else {
-                    updateStatus("All tasks completed - target reached!");
-                    currentPhase = ProcessPhase.COMPLETE;
+                    updateStatus("Cycle completed - starting new mining cycle!");
+                    
+                    // Reset progress for new cycle
+                    progress.setOresMined(0);
+                    progress.setBarsSmelted(0);
+                    progress.setItemsSmithed(0);
+                    
+                    currentPhase = ProcessPhase.WALKING; // Walk back to mining
                 }
                 return; // Exit banking immediately
             }
@@ -1165,7 +1180,8 @@ public class AIOMetalWorkerScript extends Script {
         } else if (config.smithItems() && needsBarsForSmithing()) {
             return ProcessPhase.SMITHING;
         } else {
-            return ProcessPhase.COMPLETE;
+            // CONTINUOUS LOOP: Never complete, always start new mining cycle
+            return ProcessPhase.MINING;
         }
     }
 
@@ -1234,7 +1250,7 @@ public class AIOMetalWorkerScript extends Script {
 
     /**
      * Withdraws ores needed for smelting
-     * FIXED: Now properly withdraws target quantity amount of ores
+     * CONTINUOUS LOOP: Withdraws available ores up to inventory capacity
      */
     private void withdrawOresForSmelting() {
         updateStatus("Withdrawing ores for smelting...");
@@ -1244,31 +1260,20 @@ public class AIOMetalWorkerScript extends Script {
 
         updateStatus("Available inventory slots: " + availableSlots);
 
-        // Calculate how many ores we still need to smelt
-        int targetQuantity = config.targetQuantity();
-        int oresUsedForSmelting = progress.getOresUsedForSmelting();
-        int remainingOresNeeded = Math.max(0, targetQuantity - oresUsedForSmelting);
-
-        updateStatus("Target ore quantity: " + targetQuantity + ", Used for smelting: " + oresUsedForSmelting
-                + ", Remaining: " + remainingOresNeeded);
-
-        // If no ores needed, return
-        if (remainingOresNeeded <= 0) {
-            updateStatus("All target ores have been used for smelting");
+        // CONTINUOUS LOOP: In continuous mode, just fill inventory with available ores
+        if (availableSlots <= 0) {
+            updateStatus("No available inventory slots for ores");
             return;
         }
 
-        // For simple metals like iron, just withdraw what we need or can carry
+        // For simple metals like iron, just withdraw what we can carry
         if (oreNames.length == 1) {
             String oreName = oreNames[0];
             
-            // Calculate how many ores to withdraw this trip
-            int oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
             int oresInBank = Rs2Bank.count(oreName);
-            int oresToWithdraw = Math.min(oresToWithdrawThisTrip, oresInBank);
+            int oresToWithdraw = Math.min(availableSlots, oresInBank);
 
-            updateStatus("Withdrawing " + oresToWithdraw + " " + oreName + " for smelting (remaining target: "
-                    + remainingOresNeeded + ")");
+            updateStatus("Withdrawing " + oresToWithdraw + " " + oreName + " for smelting (available in bank: " + oresInBank + ")");
             
             if (oresToWithdraw > 0) {
                 if (oresToWithdraw == 1) {
@@ -1278,13 +1283,11 @@ public class AIOMetalWorkerScript extends Script {
                 }
                 sleep(600, 1000); // Wait for withdrawal
                 
-                // Don't track ores here - only track actual consumption during smelting
                 updateStatus("Withdrew " + oresToWithdraw + " ores for smelting");
             }
         } else {
             // For alloy metals (like bronze: copper + tin)
-            int oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
-            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(oresToWithdrawThisTrip, availableSlots);
+            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(availableSlots, availableSlots);
 
             int totalOresWithdrawn = 0;
             for (Map.Entry<String, Integer> entry : requiredOres.entrySet()) {
@@ -1305,7 +1308,6 @@ public class AIOMetalWorkerScript extends Script {
                 }
             }
             
-            // Don't track ores here - only track actual consumption during smelting
             if (totalOresWithdrawn > 0) {
                 updateStatus("Withdrew " + totalOresWithdrawn + " ores for alloy smelting");
             }
@@ -1434,7 +1436,7 @@ public class AIOMetalWorkerScript extends Script {
             Microbot.log("Smithing enabled: " + config.smithItems());
             Microbot.log("Needs bars for smithing: " + needsBarsForSmithing());
             Microbot.log("Has bars to smith (inventory): " + hasBarsToSmith());
-            Microbot.log("All phases complete: " + allCurrentPhasesComplete());
+            Microbot.log("Should start new mining cycle: " + shouldStartNewMiningCycle());
         }
 
         // MYTHICAL LOGIC: Handle starting at smelting phase specially
@@ -1486,22 +1488,28 @@ public class AIOMetalWorkerScript extends Script {
                 currentPhase = ProcessPhase.BANKING; // Stay at bank to get ores first
             }
         }
-        // Priority 4: MYTHICAL ENHANCEMENT - All phases of current cycle completed,
-        // check if we should start new mining cycle
-        else if (allCurrentPhasesComplete()) {
-            updateStatus("Current cycle completed! All ores mined, smelted, and smithed successfully.");
-            currentPhase = ProcessPhase.COMPLETE;
+        // Priority 4: CONTINUOUS LOOP ENHANCEMENT - If current cycle is complete, start new mining cycle
+        else if (shouldStartNewMiningCycle()) {
+            updateStatus("Cycle completed! Starting new mining cycle...");
+            
+            // Reset progress counters for new cycle
+            progress.setOresMined(0);
+            progress.setBarsSmelted(0);
+            progress.setItemsSmithed(0);
+            // Don't reset oresUsedForSmelting as it's cumulative
+            
+            updateStatus("Progress reset - starting new mining cycle");
+            currentPhase = ProcessPhase.WALKING; // Walk back to mining area
         }
         // Priority 5: CRITICAL SAFETY CHECK - If we have bars in inventory, we MUST smith them
         else if (config.smithItems() && hasBarsToSmith()) {
             updateStatus("SAFETY: Found bars in inventory that need to be smithed!");
             currentPhase = ProcessPhase.WALKING; // Walk to anvil to smith them
         }
-        // Priority 6: All tasks completed
+        // Priority 6: Default fallback - go back to mining if nothing else applies
         else {
-            updateStatus("All tasks completed! Ores: " + totalOresMined + "/" + targetQuantity + ", Bars: "
-                    + barsSmelted + "/" + requiredBars);
-            currentPhase = ProcessPhase.COMPLETE;
+            updateStatus("No specific action needed - defaulting to mining phase");
+            currentPhase = ProcessPhase.WALKING; // Walk back to mining area
         }
 
         updateStatus("Next phase determined: " + currentPhase);
@@ -1524,26 +1532,19 @@ public class AIOMetalWorkerScript extends Script {
             return false;
         }
 
-        // NEW LOGIC: Check if we've used all target ores for smelting attempts
-        int targetQuantity = config.targetQuantity();
-        int oresUsedForSmelting = progress.getOresUsedForSmelting();
-        boolean stillNeedToUseOres = oresUsedForSmelting < targetQuantity;
-
-        if (!stillNeedToUseOres) {
-            updateStatus("All target ores have been used for smelting: " + oresUsedForSmelting + "/" + targetQuantity);
-            return false; // We've attempted to smelt all target ores
-        }
-
+        // CONTINUOUS LOOP LOGIC: Always check if we have ores available for smelting
+        // In continuous mode, we don't track cumulative usage limits
+        
         // Check if we have ores available (in bank or inventory)
         boolean hasOresInBank = Rs2Bank.hasItem(config.metalType().getOreNames()[0]);
         boolean hasOresInInventory = config.metalType().hasRequiredOres();
 
         if (config.enableDebugLogs()) {
-            Microbot.log("=== Smelting Needs Analysis ===");
-            Microbot.log("Target quantity: " + targetQuantity + ", Ores used for smelting: " + oresUsedForSmelting);
-            Microbot.log("Still need to use ores: " + stillNeedToUseOres);
+            Microbot.log("=== Smelting Needs Analysis (Continuous Mode) ===");
+            Microbot.log("Smelt bars enabled: " + config.smeltBars());
             Microbot.log("Has ores in bank: " + hasOresInBank);
             Microbot.log("Has ores in inventory: " + hasOresInInventory);
+            Microbot.log("Needs more ores for smelting: " + (hasOresInBank || hasOresInInventory));
         }
 
         return hasOresInBank || hasOresInInventory;
@@ -1578,10 +1579,10 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * MYTHICAL-LEVEL ENHANCEMENT: Checks if all current phases are complete
-     * Used to determine when to switch back to mining or complete the cycle
+     * CONTINUOUS LOOP ENHANCEMENT: Checks if current cycle is complete and should restart mining
+     * Used to determine when to start a new mining cycle instead of completing
      */
-    private boolean allCurrentPhasesComplete() {
+    private boolean shouldStartNewMiningCycle() {
         int totalOresMined = progress.getOresMined();
         int targetQuantity = config.targetQuantity();
         int oresUsedForSmelting = progress.getOresUsedForSmelting();
@@ -1594,8 +1595,7 @@ public class AIOMetalWorkerScript extends Script {
         if (!config.smeltBars()) {
             smeltingComplete = true;
         } else {
-            // Smelting is complete when all target ores have been used for smelting
-            // attempts
+            // Smelting is complete when all target ores have been used for smelting attempts
             boolean allTargetOresUsed = oresUsedForSmelting >= targetQuantity;
             boolean noMoreOres = !Rs2Bank.hasItem(config.metalType().getOreNames()[0]);
             smeltingComplete = allTargetOresUsed || noMoreOres;
@@ -1612,19 +1612,19 @@ public class AIOMetalWorkerScript extends Script {
             smithingComplete = noBarsInBank && noBarsInInventory;
         }
 
+        boolean cycleComplete = oreTargetReached && smeltingComplete && smithingComplete;
+
         if (config.enableDebugLogs()) {
-            Microbot.log("=== Phase Completion Check ===");
-            Microbot.log(
-                    "Ore target reached: " + oreTargetReached + " (" + totalOresMined + "/" + targetQuantity + ")");
-            Microbot.log("Smelting complete: " + smeltingComplete + " (ores used: " + oresUsedForSmelting + "/"
-                    + targetQuantity + ")");
+            Microbot.log("=== Cycle Completion Check ===");
+            Microbot.log("Ore target reached: " + oreTargetReached + " (" + totalOresMined + "/" + targetQuantity + ")");
+            Microbot.log("Smelting complete: " + smeltingComplete + " (ores used: " + oresUsedForSmelting + "/" + targetQuantity + ")");
             Microbot.log("Smithing complete: " + smithingComplete + " (no bars in bank: " + 
                     !Rs2Bank.hasItem(config.metalType().getBarName()) + ", no bars in inventory: " + 
                     !Rs2Inventory.hasItem(config.metalType().getBarName()) + ")");
-            Microbot.log("All phases complete: " + (oreTargetReached && smeltingComplete && smithingComplete));
+            Microbot.log("Cycle complete (start new mining): " + cycleComplete);
         }
 
-        return oreTargetReached && smeltingComplete && smithingComplete;
+        return cycleComplete;
     }
 
     /**
@@ -1703,24 +1703,6 @@ public class AIOMetalWorkerScript extends Script {
         Rs2AntibanSettings.actionCooldownChance = 0.1;
         Rs2AntibanSettings.microBreakChance = 0.05;
         // Additional anti-ban configuration can be added here
-    }
-
-    /**
-     * Checks if the task is complete based on target quantities
-     */
-    private boolean isTaskComplete() {
-        // Check if we've reached target ore quantity and completed all phases
-        boolean oreTargetReached = progress.getOresMined() >= config.targetQuantity();
-
-        // If smelting is enabled, check if we've smelted enough bars
-        boolean smeltingComplete = !config.smeltBars() ||
-                progress.getBarsSmelted() >= getRequiredBars();
-
-        // If smithing is enabled, check if we've smithed enough items
-        boolean smithingComplete = !config.smithItems() ||
-                progress.getItemsSmithed() >= getRequiredItems();
-
-        return oreTargetReached && smeltingComplete && smithingComplete;
     }
 
     /**
@@ -1981,17 +1963,19 @@ public class AIOMetalWorkerScript extends Script {
                         int targetQuantity = config.targetQuantity();
 
                         if (totalOresMined >= targetQuantity) {
-                            updateStatus("Target mining quantity reached - not walking to mining area");
+                            updateStatus("Target mining quantity reached - checking next phase or starting new cycle");
                             // Force transition to next appropriate phase instead
-                            if (config.smeltBars()) {
+                            if (config.smeltBars() && needsMoreOresForSmelting()) {
                                 currentPhase = ProcessPhase.SMELTING;
                                 return FURNACE_LOCATION;
-                            } else if (config.smithItems()) {
+                            } else if (config.smithItems() && needsBarsForSmithing()) {
                                 currentPhase = ProcessPhase.SMITHING;
                                 return ANVIL_LOCATION;
                             } else {
-                                currentPhase = ProcessPhase.COMPLETE;
-                                return null;
+                                // Start new mining cycle
+                                updateStatus("Starting new mining cycle...");
+                                currentPhase = ProcessPhase.MINING;
+                                return currentMiningArea != null ? currentMiningArea : AL_KHARID_MINING_AREA;
                             }
                         }
 
@@ -2063,7 +2047,9 @@ public class AIOMetalWorkerScript extends Script {
             case ERROR:
             case COMPLETE:
             default:
-                updateStatus("No destination needed for phase: " + currentPhase);
+                updateStatus("No destination needed for phase: " + currentPhase + " - defaulting to mining");
+                // Force mining phase if in unexpected state
+                currentPhase = ProcessPhase.MINING;
                 return null;
         }
     }
@@ -2154,27 +2140,6 @@ public class AIOMetalWorkerScript extends Script {
         }
 
         return theoreticalBars;
-    }
-
-    /**
-     * Calculates required number of items based on bars and smithing efficiency
-     * For iron, uses flexible bar count to accommodate smelting failures
-     */
-    private int getRequiredItems() {
-        int bars = getRequiredBars();
-        SmithingProduct bestItem = SmithingProduct.getBestAvailableItem(
-                Rs2Player.getRealSkillLevel(Skill.SMITHING));
-
-        int theoreticalItems = bestItem.getMaxItemsFromBars(bars);
-
-        // For iron smithing, be flexible about item count since bars may be limited due
-        // to smelting failures
-        if (config.metalType() == MetalType.IRON) {
-            // Allow completion with fewer items since we expect fewer bars
-            return (int) (theoreticalItems * 0.8);
-        }
-
-        return theoreticalItems;
     }
 
     // Additional expert-level helper methods
@@ -2278,8 +2243,8 @@ public class AIOMetalWorkerScript extends Script {
             // Set shutdown flag immediately to stop all loops
             isShuttingDown = true;
 
-            // Set phase to complete to stop execution
-            currentPhase = ProcessPhase.COMPLETE;
+            // Stop all operations
+            Microbot.log("Stopping all script operations...");
 
             // Stop the walker using the proven WildyRuneMiner pattern
             stopWalking();
@@ -2407,6 +2372,10 @@ public class AIOMetalWorkerScript extends Script {
 
         public void incrementItemsSmithed() {
             this.itemsSmithed++;
+        }
+
+        public void setItemsSmithed(int itemsSmithed) {
+            this.itemsSmithed = itemsSmithed;
         }
 
         public void incrementOresUsedForSmelting() {
