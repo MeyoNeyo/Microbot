@@ -625,50 +625,62 @@ public class AIOMetalWorkerScript extends Script {
             return;
         }
 
-        // FIXED: Smith items with improved interface detection
-        if (Rs2GameObject.interact("Anvil", "Smith")) {
-            updateStatus("FIXED: Opening smithing interface...");
+        // EXPERT FIX: Smith items using proven Varrock Anvil approach
+        // EXPERT FIX: Use specific GameObject ID like working plugin (2097 = anvil)
+        System.out.println("[DEBUG] Attempting to interact with anvil (GameObject 2097)");
+        
+        if (Rs2GameObject.interact(2097)) {
+            updateStatus("EXPERT FIX: Using anvil (GameObject 2097)...");
+            System.out.println("[DEBUG] Successfully clicked anvil, waiting for interface...");
 
-            // FIXED: Better interface detection with multiple attempts
-            boolean interfaceOpened = false;
-            for (int attempt = 0; attempt < 8; attempt++) {
-                if (Rs2Widget.hasWidget("What would you like to make?") || 
-                    Rs2Widget.hasWidget("Smith") || 
-                    Rs2Widget.hasWidget("Anvil") ||
-                    Rs2Widget.sleepUntilHasWidgetText("What would you like to make?", 270, 5, false, 1000)) {
-                    interfaceOpened = true;
-                    updateStatus("FIXED: Smithing interface detected (attempt " + (attempt + 1) + ")");
-                    break;
+            // EXPERT FIX: Wait for anvil interface using specific widget like working plugin
+            boolean interfaceOpened = sleepUntil(() -> {
+                boolean hasInterface = Rs2Widget.getWidget(312, 1) != null;
+                if (!hasInterface) {
+                    System.out.println("[DEBUG] Waiting for anvil interface 312,1...");
+                } else {
+                    System.out.println("[DEBUG] Anvil interface 312,1 detected!");
                 }
-                sleep(800, 1200);
-                updateStatus("Waiting for smithing interface... (attempt " + (attempt + 1) + "/8)");
-            }
-
+                return hasInterface;
+            }, 10000);
+            
             if (interfaceOpened) {
-                updateStatus("FIXED: Smithing interface opened - analyzing available items");
+                updateStatus("EXPERT FIX: Anvil interface opened (Widget 312) - selecting best item");
+                sleep(186, 480); // Match working plugin timing
 
-                // FIXED: Select the best available item that uses most bars
+                // EXPERT FIX: Select the best available item using widget child IDs
                 if (selectBestSmithingOption()) {
-                    updateStatus("FIXED: Selected smithing option - waiting for completion");
+                    updateStatus("EXPERT FIX: Selected smithing option - smithing in progress");
+                    System.out.println("[DEBUG] Smithing option selected successfully, waiting for completion");
+                    
                     // Wait for smithing to complete
                     waitForSmithing();
 
                     // After smithing, check if we should continue or go to bank
                     if (hasBarsToSmith()) {
-                        updateStatus("FIXED: More bars available - continuing smithing");
+                        updateStatus("EXPERT FIX: More bars available - continuing smithing");
                         // Continue smithing cycle
                     } else {
-                        updateStatus("FIXED: No more bars - going to bank");
+                        updateStatus("EXPERT FIX: No more bars - going to bank");
                         currentPhase = ProcessPhase.BANKING;
                     }
                 } else {
-                    updateStatus("FIXED: Failed to select smithing option - will retry");
+                    updateStatus("EXPERT FIX: Failed to select smithing option - will retry");
+                    System.out.println("[DEBUG] Failed to select smithing option");
                 }
             } else {
-                updateStatus("FIXED: Smithing interface did not appear after multiple attempts - will retry");
+                updateStatus("EXPERT FIX: Anvil interface (312,1) did not appear - will retry");
+                System.out.println("[DEBUG] Anvil interface did not appear after 10 seconds");
             }
         } else {
-            updateStatus("FIXED: Failed to interact with anvil - will retry");
+            updateStatus("EXPERT FIX: Failed to interact with anvil (2097) - will retry");
+            System.out.println("[DEBUG] Failed to interact with anvil GameObject 2097");
+            
+            // Check if player is moving before retrying
+            if (Rs2Player.isMoving()) {
+                System.out.println("[DEBUG] Player is moving, waiting...");
+                return;
+            }
         }
 
         // Brief pause before next attempt
@@ -1897,188 +1909,168 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * Selects the best available smithing option with progressive item selection
-     * FIXED: Properly detects anvil interface and selects items that use most bars
+     * EXPERT FIX: Selects the best available smithing option using proven Varrock Anvil approach
+     * Uses specific widget IDs and proper anvil interface detection like working plugin
      * 
      * @return true if option was successfully selected
      */
     private boolean selectBestSmithingOption() {
         try {
-            updateStatus("Analyzing smithing interface for best items...");
+            updateStatus("Waiting for anvil interface (Widget 312)...");
+            System.out.println("[DEBUG] Checking for anvil interface widget 312,1");
             
-            // Wait for smithing interface to appear with proper detection
-            boolean interfaceFound = false;
-            for (int i = 0; i < 10; i++) {
-                if (Rs2Widget.hasWidget("What would you like to make?") || 
-                    Rs2Widget.hasWidget("Smith") || 
-                    Rs2Widget.hasWidget("Anvil")) {
-                    interfaceFound = true;
-                    break;
+            // EXPERT FIX: Use specific widget ID like working Varrock plugin (312 = anvil interface)
+            boolean interfaceFound = sleepUntil(() -> {
+                boolean hasWidget = Rs2Widget.getWidget(312, 1) != null;
+                if (!hasWidget) {
+                    System.out.println("[DEBUG] Widget 312,1 not found yet...");
+                } else {
+                    System.out.println("[DEBUG] Widget 312,1 FOUND!");
                 }
-                sleep(500, 800);
-            }
+                return hasWidget;
+            }, 10000);
             
             if (!interfaceFound) {
-                updateStatus("Smithing interface not detected");
+                updateStatus("Anvil interface (312,1) not detected - retrying anvil interaction");
+                System.out.println("[DEBUG] Failed to find anvil interface widget 312,1 after 10 seconds");
                 return false;
             }
+
+            sleep(186, 480); // Match working plugin timing
 
             // Get current smithing level and available bars
             int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
             int availableBars = Rs2Inventory.count(config.metalType().getBarName());
             String metalType = config.metalType().getDisplayName().toLowerCase();
 
-            updateStatus("Smithing Level: " + currentSmithingLevel + ", Available bars: " + availableBars + ", Metal: " + metalType);
+            updateStatus("Anvil interface detected! Level: " + currentSmithingLevel + ", Bars: " + availableBars + ", Metal: " + metalType);
+            System.out.println("[DEBUG] Smithing level: " + currentSmithingLevel + ", Available bars: " + availableBars + ", Metal: " + metalType);
 
-            // FIXED: Progressive item selection based on bars used (most bars = better efficiency)
-            String selectedItem = selectBestSmithingItem(metalType, currentSmithingLevel, availableBars);
+            // EXPERT FIX: Select "All" quantity first (like working plugin does)
+            // Check if we need to set quantity to "All" (Varbit 2224)
+            int currentVarbit = Microbot.getVarbitPlayerValue(2224);
+            System.out.println("[DEBUG] Current varbit 2224 value: " + currentVarbit + ", available bars: " + availableBars);
             
-            if (selectedItem == null) {
-                updateStatus("No suitable smithing items found");
+            if (currentVarbit < availableBars) {
+                updateStatus("Setting quantity to 'All' (Widget 312,7)");
+                System.out.println("[DEBUG] Clicking 'All' button at widget 312,7");
+                Rs2Widget.clickWidget(312, 7);
+                sleep(186, 480);
+            }
+
+            // EXPERT FIX: Get the best smithing item child ID based on level and bars
+            int itemChildId = getBestSmithingItemChildId(metalType, currentSmithingLevel, availableBars);
+            
+            if (itemChildId == -1) {
+                updateStatus("No suitable smithing items found for current level");
+                System.out.println("[DEBUG] No suitable items found for level " + currentSmithingLevel + " with " + availableBars + " bars");
                 return false;
             }
 
-            updateStatus("Selected best item: " + selectedItem);
+            updateStatus("Clicking smithing item at child ID: " + itemChildId);
+            System.out.println("[DEBUG] Clicking widget 312," + itemChildId);
 
-            // FIXED: Try multiple widget clicking methods for anvil interface
-            boolean itemSelected = false;
+            // EXPERT FIX: Click the specific widget child ID (like working plugin)
+            boolean itemSelected = Rs2Widget.clickWidget(312, itemChildId);
             
-            // Method 1: Try clicking the item directly
-            if (Rs2Widget.clickWidget(selectedItem)) {
-                itemSelected = true;
-                updateStatus("Successfully selected " + selectedItem + " (direct click)");
-            }
-            // Method 2: Try with different case variations
-            else if (Rs2Widget.clickWidget(selectedItem.toLowerCase())) {
-                itemSelected = true;
-                updateStatus("Successfully selected " + selectedItem + " (lowercase)");
-            }
-            else if (Rs2Widget.clickWidget(selectedItem.toUpperCase())) {
-                itemSelected = true;
-                updateStatus("Successfully selected " + selectedItem + " (uppercase)");
-            }
-            // Method 3: Try clicking by partial name
-            else if (tryClickByPartialName(selectedItem)) {
-                itemSelected = true;
-                updateStatus("Successfully selected " + selectedItem + " (partial match)");
-            }
-
-            if (!itemSelected) {
-                updateStatus("Failed to click smithing item: " + selectedItem);
+            if (itemSelected) {
+                updateStatus("Successfully selected smithing item (Widget 312," + itemChildId + ")");
+                System.out.println("[DEBUG] Successfully clicked widget 312," + itemChildId);
+                sleep(186, 480); // Match working plugin timing
+                return true;
+            } else {
+                updateStatus("Failed to click smithing item at child ID: " + itemChildId);
+                System.out.println("[DEBUG] Failed to click widget 312," + itemChildId);
                 return false;
             }
-
-            // Wait for quantity interface
-            sleep(800, 1200);
-
-            // Select quantity - always try to use all available bars
-            Rs2Keyboard.keyPress(' '); // Space for "Make All"
-            updateStatus("Selected 'Make All' - will smith until bars run out");
-            
-            return true;
 
         } catch (Exception e) {
             handleError("Failed to select smithing option", e);
+            System.out.println("[DEBUG] Exception in selectBestSmithingOption: " + e.getMessage());
             return false;
         }
     }
 
     /**
-     * FIXED: Selects the best smithing item based on bars required (prioritizes items that use most bars)
+     * EXPERT FIX: Gets the widget child ID for the best smithing item using AnvilItem enum mapping
+     * Based on proven Varrock Anvil plugin approach with proper child ID mapping
      */
-    private String selectBestSmithingItem(String metalType, int smithingLevel, int availableBars) {
-        updateStatus("Determining best smithing item for " + metalType + " (level " + smithingLevel + ")");
+    private int getBestSmithingItemChildId(String metalType, int smithingLevel, int availableBars) {
+        updateStatus("Determining best smithing item child ID for " + metalType + " (level " + smithingLevel + ")");
 
+        // EXPERT FIX: Use AnvilItem enum child IDs like working plugin
         // Progressive item selection - items that use more bars are better for efficiency
         // Listed in order of preference (most bars first)
         
         if (metalType.equals("iron")) {
             // Iron items (ordered by bars required - most bars first)
-            if (smithingLevel >= 40 && availableBars >= 5) return "Platebody"; // 5 bars
-            if (smithingLevel >= 30 && availableBars >= 3) return "Platelegs"; // 3 bars  
-            if (smithingLevel >= 30 && availableBars >= 3) return "Plateskirt"; // 3 bars
-            if (smithingLevel >= 20 && availableBars >= 2) return "Two-handed sword"; // 3 bars
-            if (smithingLevel >= 10 && availableBars >= 2) return "Longsword"; // 2 bars
-            if (smithingLevel >= 5 && availableBars >= 2) return "Sword"; // 2 bars
-            if (smithingLevel >= 15 && availableBars >= 2) return "Battleaxe"; // 3 bars
-            if (smithingLevel >= 10 && availableBars >= 2) return "Mace"; // 2 bars
-            if (smithingLevel >= 1 && availableBars >= 1) return "Dagger"; // 1 bar
+            if (smithingLevel >= 40 && availableBars >= 5) return 22; // Platebody (5 bars) - AnvilItem.PLATE_BODY
+            if (smithingLevel >= 30 && availableBars >= 3) return 20; // Platelegs (3 bars) - AnvilItem.PLATE_LEGS  
+            if (smithingLevel >= 30 && availableBars >= 3) return 21; // Plateskirt (3 bars) - AnvilItem.PLATE_SKIRT
+            if (smithingLevel >= 20 && availableBars >= 3) return 13; // Two-handed sword (3 bars) - AnvilItem.TWO_HAND_SWORD
+            if (smithingLevel >= 15 && availableBars >= 3) return 17; // Battleaxe (3 bars) - AnvilItem.BATTLE_AXE
+            if (smithingLevel >= 10 && availableBars >= 2) return 12; // Longsword (2 bars) - AnvilItem.LONG_SWORD
+            if (smithingLevel >= 5 && availableBars >= 2) return 11; // Scimitar (2 bars) - AnvilItem.SCIMITAR
+            if (smithingLevel >= 1 && availableBars >= 1) return 9;  // Dagger (1 bar) - AnvilItem.DAGGER
         }
         else if (metalType.equals("bronze")) {
             // Bronze items (ordered by bars required)
-            if (smithingLevel >= 18 && availableBars >= 5) return "Platebody"; // 5 bars
-            if (smithingLevel >= 16 && availableBars >= 3) return "Platelegs"; // 3 bars
-            if (smithingLevel >= 16 && availableBars >= 3) return "Plateskirt"; // 3 bars
-            if (smithingLevel >= 14 && availableBars >= 3) return "Two-handed sword"; // 3 bars
-            if (smithingLevel >= 9 && availableBars >= 3) return "Battleaxe"; // 3 bars
-            if (smithingLevel >= 6 && availableBars >= 2) return "Longsword"; // 2 bars
-            if (smithingLevel >= 4 && availableBars >= 2) return "Sword"; // 2 bars
-            if (smithingLevel >= 2 && availableBars >= 2) return "Mace"; // 2 bars
-            if (smithingLevel >= 1 && availableBars >= 1) return "Dagger"; // 1 bar
+            if (smithingLevel >= 18 && availableBars >= 5) return 22; // Platebody (5 bars)
+            if (smithingLevel >= 16 && availableBars >= 3) return 20; // Platelegs (3 bars)
+            if (smithingLevel >= 16 && availableBars >= 3) return 21; // Plateskirt (3 bars)
+            if (smithingLevel >= 14 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
+            if (smithingLevel >= 9 && availableBars >= 3) return 17;  // Battleaxe (3 bars)
+            if (smithingLevel >= 6 && availableBars >= 2) return 12;  // Longsword (2 bars)
+            if (smithingLevel >= 4 && availableBars >= 2) return 11;  // Scimitar (2 bars)
+            if (smithingLevel >= 1 && availableBars >= 1) return 9;   // Dagger (1 bar)
         }
         else if (metalType.equals("steel")) {
             // Steel items (ordered by bars required)
-            if (smithingLevel >= 48 && availableBars >= 5) return "Platebody"; // 5 bars
-            if (smithingLevel >= 46 && availableBars >= 3) return "Platelegs"; // 3 bars
-            if (smithingLevel >= 46 && availableBars >= 3) return "Plateskirt"; // 3 bars
-            if (smithingLevel >= 44 && availableBars >= 3) return "Two-handed sword"; // 3 bars
-            if (smithingLevel >= 41 && availableBars >= 3) return "Battleaxe"; // 3 bars
-            if (smithingLevel >= 36 && availableBars >= 2) return "Longsword"; // 2 bars
-            if (smithingLevel >= 34 && availableBars >= 2) return "Sword"; // 2 bars
-            if (smithingLevel >= 32 && availableBars >= 2) return "Mace"; // 2 bars
-            if (smithingLevel >= 30 && availableBars >= 1) return "Dagger"; // 1 bar
+            if (smithingLevel >= 48 && availableBars >= 5) return 22; // Platebody (5 bars)
+            if (smithingLevel >= 46 && availableBars >= 3) return 20; // Platelegs (3 bars)
+            if (smithingLevel >= 46 && availableBars >= 3) return 21; // Plateskirt (3 bars)
+            if (smithingLevel >= 44 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
+            if (smithingLevel >= 41 && availableBars >= 3) return 17; // Battleaxe (3 bars)
+            if (smithingLevel >= 36 && availableBars >= 2) return 12; // Longsword (2 bars)
+            if (smithingLevel >= 34 && availableBars >= 2) return 11; // Scimitar (2 bars)
+            if (smithingLevel >= 30 && availableBars >= 1) return 9;  // Dagger (1 bar)
         }
         else if (metalType.equals("mithril")) {
             // Mithril items (ordered by bars required)
-            if (smithingLevel >= 68 && availableBars >= 5) return "Platebody"; // 5 bars
-            if (smithingLevel >= 66 && availableBars >= 3) return "Platelegs"; // 3 bars
-            if (smithingLevel >= 66 && availableBars >= 3) return "Plateskirt"; // 3 bars
-            if (smithingLevel >= 64 && availableBars >= 3) return "Two-handed sword"; // 3 bars
-            if (smithingLevel >= 61 && availableBars >= 3) return "Battleaxe"; // 3 bars
-            if (smithingLevel >= 56 && availableBars >= 2) return "Longsword"; // 2 bars
-            if (smithingLevel >= 54 && availableBars >= 2) return "Sword"; // 2 bars
-            if (smithingLevel >= 52 && availableBars >= 2) return "Mace"; // 2 bars
-            if (smithingLevel >= 50 && availableBars >= 1) return "Dagger"; // 1 bar
+            if (smithingLevel >= 68 && availableBars >= 5) return 22; // Platebody (5 bars)
+            if (smithingLevel >= 66 && availableBars >= 3) return 20; // Platelegs (3 bars)
+            if (smithingLevel >= 66 && availableBars >= 3) return 21; // Plateskirt (3 bars)
+            if (smithingLevel >= 64 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
+            if (smithingLevel >= 61 && availableBars >= 3) return 17; // Battleaxe (3 bars)
+            if (smithingLevel >= 56 && availableBars >= 2) return 12; // Longsword (2 bars)
+            if (smithingLevel >= 54 && availableBars >= 2) return 11; // Scimitar (2 bars)
+            if (smithingLevel >= 50 && availableBars >= 1) return 9;  // Dagger (1 bar)
         }
 
-        // Fallback to basic items if nothing else works
-        if (availableBars >= 1) return "Dagger";
+        // Fallback to basic dagger if nothing else works
+        if (availableBars >= 1) return 9; // AnvilItem.DAGGER
         
-        return null;
-    }
-
-    /**
-     * Tries to click a smithing item by partial name matching
-     */
-    private boolean tryClickByPartialName(String itemName) {
-        try {
-            // Try common partial matches for smithing items
-            String[] variations = {
-                itemName.split(" ")[0], // First word only
-                itemName.replace(" ", ""), // No spaces
-                itemName.toLowerCase().replace(" ", ""), // No spaces lowercase
-            };
-            
-            for (String variation : variations) {
-                if (Rs2Widget.clickWidget(variation)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (Exception e) {
-            return false;
-        }
+        return -1; // No suitable item found
     }
 
     /**
      * Waits for smithing process to complete with progress monitoring
+     * EXPERT FIX: Enhanced with proper XP drop monitoring like working plugin
      */
     private void waitForSmithing() {
         updateStatus("Smithing in progress...");
         long smithingStartTime = System.currentTimeMillis();
         int initialBarCount = Rs2Inventory.count(config.metalType().getBarName());
+        boolean expectingXPDrop = true;
 
-        while (Rs2Player.isAnimating() || Rs2Player.isMoving()) {
+        while (Rs2Player.isAnimating() || Rs2Player.isMoving() || expectingXPDrop) {
+            // EXPERT FIX: Use XP drop monitoring like working plugin
+            if (expectingXPDrop && Rs2Player.waitForXpDrop(Skill.SMITHING, 7500)) {
+                updateStatus("Smithing XP drop detected - continuing...");
+                // Reset expectation for next XP drop
+                expectingXPDrop = Rs2Player.isAnimating();
+            }
+
             // Monitor smithing progress
             int currentBarCount = Rs2Inventory.count(config.metalType().getBarName());
             if (currentBarCount < initialBarCount) {
@@ -2087,6 +2079,7 @@ public class AIOMetalWorkerScript extends Script {
                     progress.incrementItemsSmithed();
                 }
                 initialBarCount = currentBarCount;
+                updateStatus("Bars remaining: " + currentBarCount + ", Items smithed: " + progress.getItemsSmithed());
             }
 
             // Safety timeout (10 minutes max)
@@ -2097,11 +2090,12 @@ public class AIOMetalWorkerScript extends Script {
 
             // Check if we're still smithing
             if (!Rs2Player.isAnimating() && !hasBarsToSmith()) {
-                updateStatus("Smithing completed");
+                updateStatus("Smithing completed - no more bars");
                 break;
             }
 
-            sleep(600, 1000);
+            // EXPERT FIX: Use working plugin sleep timing
+            sleep(256, 789);
         }
     }
 
