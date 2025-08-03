@@ -1081,20 +1081,22 @@ public class AIOMetalWorkerScript extends Script {
 
             // SMITHING PRIORITY FIX: Handle context-aware item withdrawal
             // If we came from smithing phase and need bars, prioritize getting bars
-            if (currentPhase == ProcessPhase.SMITHING && config.smithItems() && needsBarsForSmithing()) {
-                updateStatus("SMITHING CONTEXT: Currently in smithing phase - prioritizing bars over ores");
+            if (currentPhase == ProcessPhase.SMITHING && config.smithItems()) {
+                updateStatus("SMITHING CONTEXT: Currently in smithing phase - checking for bars");
                 
                 if (config.enableDebugLogs()) {
-                    Microbot.log("SMITHING CONTEXT FIX: Detected smithing phase with missing bars");
+                    Microbot.log("SMITHING CONTEXT FIX: Detected smithing phase");
                     Microbot.log("  Current phase: " + currentPhase);
                     Microbot.log("  Bar name: " + barName);
                     Microbot.log("  Bars in bank: " + Rs2Bank.count(barName));
+                    Microbot.log("  Bars in inventory: " + Rs2Inventory.count(barName));
                 }
                 
                 // Check if we have bars in bank first
                 int barsInBank = Rs2Bank.count(barName);
+                int barsInInventory = Rs2Inventory.count(barName);
                 
-                if (barsInBank > 0) {
+                if (barsInBank > 0 && barsInInventory == 0) {
                     updateStatus("SMITHING CONTEXT: Found " + barsInBank + " " + barName + " in bank - withdrawing for smithing");
                     if (config.enableDebugLogs()) {
                         Microbot.log("SMITHING CONTEXT FIX: Withdrawing bars for smithing - count: " + barsInBank);
@@ -1106,7 +1108,13 @@ public class AIOMetalWorkerScript extends Script {
                     
                     // Stay in smithing phase - go back to anvil
                     currentPhase = ProcessPhase.WALKING;
-                    return;
+                    return; // CRITICAL: Return early to prevent withdrawRequiredItems() override
+                } else if (barsInInventory > 0) {
+                    updateStatus("SMITHING CONTEXT: Already have " + barsInInventory + " bars in inventory - going to anvil");
+                    Rs2Bank.closeBank();
+                    sleep(500, 800);
+                    currentPhase = ProcessPhase.WALKING;
+                    return; // CRITICAL: Return early 
                 } else {
                     updateStatus("SMITHING CONTEXT: No bars in bank - switching to smelting to make bars");
                     if (config.enableDebugLogs()) {
@@ -1138,7 +1146,7 @@ public class AIOMetalWorkerScript extends Script {
                         
                         // Switch to smelting phase to make bars
                         currentPhase = ProcessPhase.WALKING; // Will determine smelting in walking phase
-                        return;
+                        return; // CRITICAL: Return early to prevent withdrawRequiredItems() override
                     } else {
                         updateStatus("SMITHING CONTEXT: No ores or bars available - need to mine first");
                         if (config.enableDebugLogs()) {
