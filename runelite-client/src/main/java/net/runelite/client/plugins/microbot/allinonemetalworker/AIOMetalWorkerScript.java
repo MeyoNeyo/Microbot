@@ -248,6 +248,7 @@ public class AIOMetalWorkerScript extends Script {
                 progress.setOresMined(0);
                 progress.setBarsSmelted(0);
                 progress.setItemsSmithed(0);
+                progress.setOresUsedForSmelting(0); // FIXED: Reset for new cycle
                 // Continue mining in this phase with reset counters
                 updateStatus("New cycle started - continuing mining");
             } else {
@@ -1006,6 +1007,7 @@ public class AIOMetalWorkerScript extends Script {
                     progress.setOresMined(0);
                     progress.setBarsSmelted(0);
                     progress.setItemsSmithed(0);
+                    progress.setOresUsedForSmelting(0); // FIXED: Reset for new cycle
                     
                     currentPhase = ProcessPhase.WALKING; // Walk back to mining
                 }
@@ -1522,7 +1524,7 @@ public class AIOMetalWorkerScript extends Script {
             progress.setOresMined(0);
             progress.setBarsSmelted(0);
             progress.setItemsSmithed(0);
-            // Don't reset oresUsedForSmelting as it's cumulative
+            progress.setOresUsedForSmelting(0); // FIXED: Reset for new cycle in continuous loop
             
             updateStatus("Progress reset - starting new mining cycle");
             currentPhase = ProcessPhase.WALKING; // Walk back to mining area
@@ -1558,22 +1560,38 @@ public class AIOMetalWorkerScript extends Script {
             return false;
         }
 
-        // CONTINUOUS LOOP LOGIC: Always check if we have ores available for smelting
-        // In continuous mode, we don't track cumulative usage limits
+        // FIXED: Check if we've already processed the target quantity of ores for smelting
+        int targetQuantity = config.targetQuantity();
+        int oresUsedForSmelting = progress.getOresUsedForSmelting();
         
-        // Check if we have ores available (in bank or inventory)
+        // If we've already processed all target ores, no more smelting needed
+        if (oresUsedForSmelting >= targetQuantity) {
+            if (config.enableDebugLogs()) {
+                Microbot.log("=== Smelting Target Complete ===");
+                Microbot.log("Target ores: " + targetQuantity);
+                Microbot.log("Ores used for smelting: " + oresUsedForSmelting);
+                Microbot.log("Smelting complete - moving to smithing phase");
+            }
+            return false;
+        }
+        
+        // Check if we have ores available (in bank or inventory) AND haven't reached target
         boolean hasOresInBank = Rs2Bank.hasItem(config.metalType().getOreNames()[0]);
         boolean hasOresInInventory = config.metalType().hasRequiredOres();
+        int remainingOresNeeded = targetQuantity - oresUsedForSmelting;
 
         if (config.enableDebugLogs()) {
-            Microbot.log("=== Smelting Needs Analysis (Continuous Mode) ===");
+            Microbot.log("=== Smelting Needs Analysis ===");
             Microbot.log("Smelt bars enabled: " + config.smeltBars());
+            Microbot.log("Target quantity: " + targetQuantity);
+            Microbot.log("Ores used for smelting: " + oresUsedForSmelting);
+            Microbot.log("Remaining ores needed: " + remainingOresNeeded);
             Microbot.log("Has ores in bank: " + hasOresInBank);
             Microbot.log("Has ores in inventory: " + hasOresInInventory);
-            Microbot.log("Needs more ores for smelting: " + (hasOresInBank || hasOresInInventory));
+            Microbot.log("Needs more ores for smelting: " + ((hasOresInBank || hasOresInInventory) && remainingOresNeeded > 0));
         }
 
-        return hasOresInBank || hasOresInInventory;
+        return (hasOresInBank || hasOresInInventory) && remainingOresNeeded > 0;
     }
 
     /**
@@ -2435,6 +2453,10 @@ public class AIOMetalWorkerScript extends Script {
 
         public void addOresUsedForSmelting(int count) {
             this.oresUsedForSmelting += count;
+        }
+
+        public void setOresUsedForSmelting(int oresUsedForSmelting) {
+            this.oresUsedForSmelting = oresUsedForSmelting;
         }
 
         public void addMiningXp(int xp) {
