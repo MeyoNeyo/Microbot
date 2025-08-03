@@ -532,6 +532,7 @@ public class AIOMetalWorkerScript extends Script {
 
         // Check if we're at the furnace
         if (Rs2Player.getWorldLocation().distanceTo(FURNACE_LOCATION) > 3) {
+            updateStatus("Not at furnace - walking to Al Kharid furnace");
             currentPhase = ProcessPhase.WALKING;
             return;
         }
@@ -549,10 +550,16 @@ public class AIOMetalWorkerScript extends Script {
                     // Wait for smelting to complete
                     waitForSmelting();
 
-                    // After smelting is complete, we should go to banking to either
-                    // get more ores or proceed to smithing
-                    currentPhase = ProcessPhase.BANKING;
-                    updateStatus("Smelting completed - proceeding to banking");
+                    // FIXED: Check if there are still ores left to smelt before going to bank
+                    if (hasRequiredOres()) {
+                        updateStatus("Smelting session complete but still have ores - continuing to smelt");
+                        // Stay in smelting phase to smelt remaining ores
+                        return;
+                    } else {
+                        // No more ores in inventory - go to bank for next phase
+                        currentPhase = ProcessPhase.BANKING;
+                        updateStatus("All ores smelted - proceeding to banking");
+                    }
                 } else {
                     updateStatus("Failed to select smelting option - will retry");
                 }
@@ -1772,7 +1779,7 @@ public class AIOMetalWorkerScript extends Script {
      */
     /**
      * Waits for smelting process to complete with intelligent monitoring
-     * NEW LOGIC: Tracks ores used for smelting attempts instead of bars produced
+     * IMPROVED LOGIC: Properly waits until all ores are consumed or smelting stops
      */
     private void waitForSmelting() {
         updateStatus("Smelting in progress...");
@@ -1787,10 +1794,14 @@ public class AIOMetalWorkerScript extends Script {
 
         updateStatus("Starting smelting with " + initialOreCount + " ores in inventory");
 
-        while (Rs2Player.isAnimating() || Rs2Player.isMoving()) {
-            // Safety timeout (5 minutes max)
-            if (System.currentTimeMillis() - smeltingStartTime > 300000) {
-                handleError("Smelting timeout exceeded");
+        int noAnimationTime = 0;
+        int maxNoAnimationTime = 15000; // 15 seconds max without animation before stopping
+
+        // IMPROVED: Keep smelting while we have ores AND are still making progress
+        while (true) {
+            // Safety timeout (10 minutes max)
+            if (System.currentTimeMillis() - smeltingStartTime > 600000) {
+                handleError("Smelting timeout exceeded (10 minutes)");
                 break;
             }
 
@@ -1800,19 +1811,40 @@ public class AIOMetalWorkerScript extends Script {
                 currentOreCount += Rs2Inventory.count(oreName);
             }
 
-            // Check if we're still smelting - either animating OR have ores
-            if (!Rs2Player.isAnimating() && currentOreCount == 0) {
-                updateStatus("Smelting completed - no more ores in inventory");
+            // If no ores left, smelting is complete
+            if (currentOreCount == 0) {
+                updateStatus("All ores smelted - smelting complete!");
                 break;
             }
 
-            // Check if inventory is full (edge case)
-            if (Rs2Inventory.isFull() && currentOreCount == 0) {
-                updateStatus("Smelting session complete - inventory full or no ores left");
-                break;
+            // Check if player is animating (smelting)
+            if (Rs2Player.isAnimating()) {
+                noAnimationTime = 0; // Reset no-animation timer
+                updateStatus("Smelting... (" + currentOreCount + " ores remaining)");
+            } else {
+                noAnimationTime += 1000;
+                
+                // If no animation for too long, check if smelting interface is still open
+                if (noAnimationTime > maxNoAnimationTime) {
+                    if (!Rs2Widget.hasWidget("What would you like to smelt?")) {
+                        updateStatus("Smelting interface closed and no animation - smelting may have stopped");
+                        break;
+                    }
+                    
+                    // Try to restart smelting if interface is still open but not animating
+                    updateStatus("No smelting animation for " + (noAnimationTime/1000) + "s - attempting to restart");
+                    Rs2Keyboard.keyPress(' '); // Press space to continue smelting
+                    noAnimationTime = 0; // Reset timer after attempting restart
+                }
             }
 
-            sleep(600, 1000);
+            // Check if inventory is full (can't smelt more)
+            if (Rs2Inventory.isFull() && currentOreCount > 0) {
+                updateStatus("Inventory full but still have ores - may need to continue smelting");
+                // Don't break here - let it continue if still animating
+            }
+
+            sleep(1000, 1500); // Check every 1-1.5 seconds
         }
 
         // Final ore count check to track total ores consumed in this session
@@ -1829,8 +1861,8 @@ public class AIOMetalWorkerScript extends Script {
                         " (Total used: " + progress.getOresUsedForSmelting() + "/" + config.targetQuantity() + ")");
         }
 
-        updateStatus("Smelting session complete! Total ores used: " + progress.getOresUsedForSmelting() + "/"
-                + config.targetQuantity());
+        updateStatus("Smelting session complete! Remaining ores: " + finalOreCount + 
+                    ", Total ores used: " + progress.getOresUsedForSmelting() + "/" + config.targetQuantity());
     }
 
     /**
