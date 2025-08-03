@@ -625,37 +625,50 @@ public class AIOMetalWorkerScript extends Script {
             return;
         }
 
-        // MYTHICAL ENHANCEMENT: Smith items with dynamic item selection
+        // FIXED: Smith items with improved interface detection
         if (Rs2GameObject.interact("Anvil", "Smith")) {
-            updateStatus("MYTHICAL: Opening smithing interface...");
+            updateStatus("FIXED: Opening smithing interface...");
 
-            // Wait for smithing interface with timeout
-            if (Rs2Widget.sleepUntilHasWidgetText("What would you like to make?", 270, 5, false, 6000)) {
-                updateStatus("MYTHICAL: Smithing interface opened - selecting best item");
+            // FIXED: Better interface detection with multiple attempts
+            boolean interfaceOpened = false;
+            for (int attempt = 0; attempt < 8; attempt++) {
+                if (Rs2Widget.hasWidget("What would you like to make?") || 
+                    Rs2Widget.hasWidget("Smith") || 
+                    Rs2Widget.hasWidget("Anvil") ||
+                    Rs2Widget.sleepUntilHasWidgetText("What would you like to make?", 270, 5, false, 1000)) {
+                    interfaceOpened = true;
+                    updateStatus("FIXED: Smithing interface detected (attempt " + (attempt + 1) + ")");
+                    break;
+                }
+                sleep(800, 1200);
+                updateStatus("Waiting for smithing interface... (attempt " + (attempt + 1) + "/8)");
+            }
 
-                // MYTHICAL ENHANCEMENT: Select the best available item based on current
-                // smithing level
+            if (interfaceOpened) {
+                updateStatus("FIXED: Smithing interface opened - analyzing available items");
+
+                // FIXED: Select the best available item that uses most bars
                 if (selectBestSmithingOption()) {
-                    updateStatus("MYTHICAL: Selected smithing option - waiting for completion");
+                    updateStatus("FIXED: Selected smithing option - waiting for completion");
                     // Wait for smithing to complete
                     waitForSmithing();
 
                     // After smithing, check if we should continue or go to bank
                     if (hasBarsToSmith()) {
-                        updateStatus("MYTHICAL: More bars available - continuing smithing");
+                        updateStatus("FIXED: More bars available - continuing smithing");
                         // Continue smithing cycle
                     } else {
-                        updateStatus("MYTHICAL: No more bars - going to bank");
+                        updateStatus("FIXED: No more bars - going to bank");
                         currentPhase = ProcessPhase.BANKING;
                     }
                 } else {
-                    updateStatus("MYTHICAL: Failed to select smithing option - will retry");
+                    updateStatus("FIXED: Failed to select smithing option - will retry");
                 }
             } else {
-                updateStatus("MYTHICAL: Smithing interface did not appear - will retry");
+                updateStatus("FIXED: Smithing interface did not appear after multiple attempts - will retry");
             }
         } else {
-            updateStatus("MYTHICAL: Failed to interact with anvil - will retry");
+            updateStatus("FIXED: Failed to interact with anvil - will retry");
         }
 
         // Brief pause before next attempt
@@ -1884,92 +1897,175 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * Selects the best available smithing option with mythical-level dynamic item
-     * selection
-     * MYTHICAL ENHANCEMENT: Progressive item selection based on current smithing
-     * level and bar efficiency
+     * Selects the best available smithing option with progressive item selection
+     * FIXED: Properly detects anvil interface and selects items that use most bars
      * 
      * @return true if option was successfully selected
      */
     private boolean selectBestSmithingOption() {
         try {
-            // Wait for smithing interface to appear
-            if (!Rs2Widget.hasWidget("What would you like to make?") && !Rs2Widget.hasWidget("Anvil")) {
-                sleep(1000, 1500);
+            updateStatus("Analyzing smithing interface for best items...");
+            
+            // Wait for smithing interface to appear with proper detection
+            boolean interfaceFound = false;
+            for (int i = 0; i < 10; i++) {
+                if (Rs2Widget.hasWidget("What would you like to make?") || 
+                    Rs2Widget.hasWidget("Smith") || 
+                    Rs2Widget.hasWidget("Anvil")) {
+                    interfaceFound = true;
+                    break;
+                }
+                sleep(500, 800);
+            }
+            
+            if (!interfaceFound) {
+                updateStatus("Smithing interface not detected");
                 return false;
             }
 
-            // MYTHICAL ENHANCEMENT: Get current smithing level for dynamic item selection
+            // Get current smithing level and available bars
             int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
+            int availableBars = Rs2Inventory.count(config.metalType().getBarName());
+            String metalType = config.metalType().getDisplayName().toLowerCase();
 
-            // MYTHICAL ENHANCEMENT: Determine best item to smith based on level,
-            // efficiency, and available bars
-            SmithingProduct bestItem = SmithingProduct.getBestAvailableItem(currentSmithingLevel);
+            updateStatus("Smithing Level: " + currentSmithingLevel + ", Available bars: " + availableBars + ", Metal: " + metalType);
 
-            if (bestItem == null) {
-                updateStatus("No smithable items available for current level: " + currentSmithingLevel);
+            // FIXED: Progressive item selection based on bars used (most bars = better efficiency)
+            String selectedItem = selectBestSmithingItem(metalType, currentSmithingLevel, availableBars);
+            
+            if (selectedItem == null) {
+                updateStatus("No suitable smithing items found");
                 return false;
             }
 
-            // MYTHICAL ENHANCEMENT: Enhanced logging for debugging
-            if (config.enableDebugLogs()) {
-                Microbot.log("=== Smithing Item Selection ===");
-                Microbot.log("Current Smithing Level: " + currentSmithingLevel);
-                Microbot.log("Selected Item: " + bestItem.getItemName());
-                Microbot.log("Bars Required: " + bestItem.getBarsRequired());
-                Microbot.log("XP per Bar: " + bestItem.getXpPerBar());
+            updateStatus("Selected best item: " + selectedItem);
+
+            // FIXED: Try multiple widget clicking methods for anvil interface
+            boolean itemSelected = false;
+            
+            // Method 1: Try clicking the item directly
+            if (Rs2Widget.clickWidget(selectedItem)) {
+                itemSelected = true;
+                updateStatus("Successfully selected " + selectedItem + " (direct click)");
+            }
+            // Method 2: Try with different case variations
+            else if (Rs2Widget.clickWidget(selectedItem.toLowerCase())) {
+                itemSelected = true;
+                updateStatus("Successfully selected " + selectedItem + " (lowercase)");
+            }
+            else if (Rs2Widget.clickWidget(selectedItem.toUpperCase())) {
+                itemSelected = true;
+                updateStatus("Successfully selected " + selectedItem + " (uppercase)");
+            }
+            // Method 3: Try clicking by partial name
+            else if (tryClickByPartialName(selectedItem)) {
+                itemSelected = true;
+                updateStatus("Successfully selected " + selectedItem + " (partial match)");
             }
 
-            // MYTHICAL ENHANCEMENT: Try multiple widget interaction methods for reliability
-            String itemName = bestItem.getItemName();
-            boolean widgetClicked = false;
-
-            // Try different ways to click the smithing option
-            if (Rs2Widget.clickWidget(itemName)) {
-                widgetClicked = true;
-                updateStatus("Selected " + itemName + " for smithing (method 1)");
-            } else if (Rs2Widget.clickWidget(itemName.toLowerCase())) {
-                widgetClicked = true;
-                updateStatus("Selected " + itemName + " for smithing (method 2)");
-            } else if (Rs2Widget.clickWidget(itemName.toUpperCase())) {
-                widgetClicked = true;
-                updateStatus("Selected " + itemName + " for smithing (method 3)");
-            }
-
-            if (!widgetClicked) {
-                updateStatus("Failed to click smithing widget for: " + itemName);
+            if (!itemSelected) {
+                updateStatus("Failed to click smithing item: " + selectedItem);
                 return false;
             }
 
-            // Wait for quantity interface to appear
+            // Wait for quantity interface
             sleep(800, 1200);
 
-            // MYTHICAL ENHANCEMENT: Smart quantity calculation
-            int availableBars = Rs2Inventory.count(config.metalType().getBarName());
-            int maxItems = bestItem.getMaxItemsFromBars(availableBars);
-
-            if (maxItems > 0) {
-                updateStatus("Smithing " + maxItems + " " + itemName + " using "
-                        + (maxItems * bestItem.getBarsRequired()) + " bars");
-
-                // MYTHICAL ENHANCEMENT: Optimized quantity input
-                if (maxItems >= 10) {
-                    Rs2Keyboard.keyPress(' '); // Make All (space bar)
-                    updateStatus("Selected 'Make All' option");
-                } else {
-                    Rs2Keyboard.typeString(String.valueOf(maxItems));
-                    Rs2Keyboard.keyPress(KeyEvent.VK_ENTER);
-                    updateStatus("Entered quantity: " + maxItems);
-                }
-                return true;
-            } else {
-                updateStatus(
-                        "Not enough bars to make any " + itemName + " (need " + bestItem.getBarsRequired() + " bars)");
-                return false;
-            }
+            // Select quantity - always try to use all available bars
+            Rs2Keyboard.keyPress(' '); // Space for "Make All"
+            updateStatus("Selected 'Make All' - will smith until bars run out");
+            
+            return true;
 
         } catch (Exception e) {
             handleError("Failed to select smithing option", e);
+            return false;
+        }
+    }
+
+    /**
+     * FIXED: Selects the best smithing item based on bars required (prioritizes items that use most bars)
+     */
+    private String selectBestSmithingItem(String metalType, int smithingLevel, int availableBars) {
+        updateStatus("Determining best smithing item for " + metalType + " (level " + smithingLevel + ")");
+
+        // Progressive item selection - items that use more bars are better for efficiency
+        // Listed in order of preference (most bars first)
+        
+        if (metalType.equals("iron")) {
+            // Iron items (ordered by bars required - most bars first)
+            if (smithingLevel >= 40 && availableBars >= 5) return "Platebody"; // 5 bars
+            if (smithingLevel >= 30 && availableBars >= 3) return "Platelegs"; // 3 bars  
+            if (smithingLevel >= 30 && availableBars >= 3) return "Plateskirt"; // 3 bars
+            if (smithingLevel >= 20 && availableBars >= 2) return "Two-handed sword"; // 3 bars
+            if (smithingLevel >= 10 && availableBars >= 2) return "Longsword"; // 2 bars
+            if (smithingLevel >= 5 && availableBars >= 2) return "Sword"; // 2 bars
+            if (smithingLevel >= 15 && availableBars >= 2) return "Battleaxe"; // 3 bars
+            if (smithingLevel >= 10 && availableBars >= 2) return "Mace"; // 2 bars
+            if (smithingLevel >= 1 && availableBars >= 1) return "Dagger"; // 1 bar
+        }
+        else if (metalType.equals("bronze")) {
+            // Bronze items (ordered by bars required)
+            if (smithingLevel >= 18 && availableBars >= 5) return "Platebody"; // 5 bars
+            if (smithingLevel >= 16 && availableBars >= 3) return "Platelegs"; // 3 bars
+            if (smithingLevel >= 16 && availableBars >= 3) return "Plateskirt"; // 3 bars
+            if (smithingLevel >= 14 && availableBars >= 3) return "Two-handed sword"; // 3 bars
+            if (smithingLevel >= 9 && availableBars >= 3) return "Battleaxe"; // 3 bars
+            if (smithingLevel >= 6 && availableBars >= 2) return "Longsword"; // 2 bars
+            if (smithingLevel >= 4 && availableBars >= 2) return "Sword"; // 2 bars
+            if (smithingLevel >= 2 && availableBars >= 2) return "Mace"; // 2 bars
+            if (smithingLevel >= 1 && availableBars >= 1) return "Dagger"; // 1 bar
+        }
+        else if (metalType.equals("steel")) {
+            // Steel items (ordered by bars required)
+            if (smithingLevel >= 48 && availableBars >= 5) return "Platebody"; // 5 bars
+            if (smithingLevel >= 46 && availableBars >= 3) return "Platelegs"; // 3 bars
+            if (smithingLevel >= 46 && availableBars >= 3) return "Plateskirt"; // 3 bars
+            if (smithingLevel >= 44 && availableBars >= 3) return "Two-handed sword"; // 3 bars
+            if (smithingLevel >= 41 && availableBars >= 3) return "Battleaxe"; // 3 bars
+            if (smithingLevel >= 36 && availableBars >= 2) return "Longsword"; // 2 bars
+            if (smithingLevel >= 34 && availableBars >= 2) return "Sword"; // 2 bars
+            if (smithingLevel >= 32 && availableBars >= 2) return "Mace"; // 2 bars
+            if (smithingLevel >= 30 && availableBars >= 1) return "Dagger"; // 1 bar
+        }
+        else if (metalType.equals("mithril")) {
+            // Mithril items (ordered by bars required)
+            if (smithingLevel >= 68 && availableBars >= 5) return "Platebody"; // 5 bars
+            if (smithingLevel >= 66 && availableBars >= 3) return "Platelegs"; // 3 bars
+            if (smithingLevel >= 66 && availableBars >= 3) return "Plateskirt"; // 3 bars
+            if (smithingLevel >= 64 && availableBars >= 3) return "Two-handed sword"; // 3 bars
+            if (smithingLevel >= 61 && availableBars >= 3) return "Battleaxe"; // 3 bars
+            if (smithingLevel >= 56 && availableBars >= 2) return "Longsword"; // 2 bars
+            if (smithingLevel >= 54 && availableBars >= 2) return "Sword"; // 2 bars
+            if (smithingLevel >= 52 && availableBars >= 2) return "Mace"; // 2 bars
+            if (smithingLevel >= 50 && availableBars >= 1) return "Dagger"; // 1 bar
+        }
+
+        // Fallback to basic items if nothing else works
+        if (availableBars >= 1) return "Dagger";
+        
+        return null;
+    }
+
+    /**
+     * Tries to click a smithing item by partial name matching
+     */
+    private boolean tryClickByPartialName(String itemName) {
+        try {
+            // Try common partial matches for smithing items
+            String[] variations = {
+                itemName.split(" ")[0], // First word only
+                itemName.replace(" ", ""), // No spaces
+                itemName.toLowerCase().replace(" ", ""), // No spaces lowercase
+            };
+            
+            for (String variation : variations) {
+                if (Rs2Widget.clickWidget(variation)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
             return false;
         }
     }
