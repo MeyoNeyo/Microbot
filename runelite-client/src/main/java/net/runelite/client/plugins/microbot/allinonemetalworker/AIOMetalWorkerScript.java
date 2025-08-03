@@ -1250,30 +1250,49 @@ public class AIOMetalWorkerScript extends Script {
 
     /**
      * Withdraws ores needed for smelting
-     * CONTINUOUS LOOP: Withdraws available ores up to inventory capacity
+     * CONTINUOUS LOOP: Respects target quantity while optimizing for inventory capacity
      */
     private void withdrawOresForSmelting() {
         updateStatus("Withdrawing ores for smelting...");
 
         String[] oreNames = config.metalType().getOreNames();
         int availableSlots = 28 - Rs2Inventory.count(); // Account for existing items/tools
+        int targetQuantity = config.targetQuantity();
+        int oresUsedForSmelting = progress.getOresUsedForSmelting();
+        int remainingOresNeeded = Math.max(0, targetQuantity - oresUsedForSmelting);
 
         updateStatus("Available inventory slots: " + availableSlots);
+        updateStatus("Target quantity: " + targetQuantity + ", Used for smelting: " + oresUsedForSmelting + ", Remaining: " + remainingOresNeeded);
 
-        // CONTINUOUS LOOP: In continuous mode, just fill inventory with available ores
         if (availableSlots <= 0) {
             updateStatus("No available inventory slots for ores");
             return;
         }
 
-        // For simple metals like iron, just withdraw what we can carry
+        if (remainingOresNeeded <= 0) {
+            updateStatus("All target ores have been processed for smelting");
+            return;
+        }
+
+        // Calculate how many ores to withdraw this trip
+        // If target is 28 or more, fill inventory; if less, respect the target
+        int oresToWithdrawThisTrip;
+        if (targetQuantity >= 28) {
+            // Target is full inventory or more - can take full inventory
+            oresToWithdrawThisTrip = Math.min(availableSlots, remainingOresNeeded);
+        } else {
+            // Target is less than full inventory - respect the exact target
+            oresToWithdrawThisTrip = Math.min(remainingOresNeeded, availableSlots);
+        }
+
+        // For simple metals like iron, just withdraw what we need
         if (oreNames.length == 1) {
             String oreName = oreNames[0];
             
             int oresInBank = Rs2Bank.count(oreName);
-            int oresToWithdraw = Math.min(availableSlots, oresInBank);
+            int oresToWithdraw = Math.min(oresToWithdrawThisTrip, oresInBank);
 
-            updateStatus("Withdrawing " + oresToWithdraw + " " + oreName + " for smelting (available in bank: " + oresInBank + ")");
+            updateStatus("Withdrawing " + oresToWithdraw + " " + oreName + " for smelting (target: " + targetQuantity + ", remaining: " + remainingOresNeeded + ")");
             
             if (oresToWithdraw > 0) {
                 if (oresToWithdraw == 1) {
@@ -1287,7 +1306,7 @@ public class AIOMetalWorkerScript extends Script {
             }
         } else {
             // For alloy metals (like bronze: copper + tin)
-            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(availableSlots, availableSlots);
+            Map<String, Integer> requiredOres = calculateRequiredOresForSmelting(oresToWithdrawThisTrip, availableSlots);
 
             int totalOresWithdrawn = 0;
             for (Map.Entry<String, Integer> entry : requiredOres.entrySet()) {
