@@ -1998,12 +1998,16 @@ public class AIOMetalWorkerScript extends Script {
     private int getBestSmithingItemChildId(String metalType, int smithingLevel, int availableBars) {
         updateStatus("Determining best smithing item child ID for " + metalType + " (level " + smithingLevel + ")");
         System.out.println("[DEBUG] Selecting smithing item for " + metalType + " with level " + smithingLevel + " and " + availableBars + " bars");
+        System.out.println("[DEBUG] Current player smithing level: " + Rs2Player.getRealSkillLevel(Skill.SMITHING));
 
         // LEVEL-AWARE PROGRESSION: Use actual RuneScape smithing level requirements
         // Progressive item selection - items that use more bars are better for efficiency
         // Listed in order of preference (most bars first) with CORRECT level requirements
         
-        if (metalType.equals("iron")) {
+        String metalTypeLower = metalType.toLowerCase();
+        System.out.println("[DEBUG] Metal type (lowercase): '" + metalTypeLower + "'");
+        
+        if (metalTypeLower.equals("iron")) {
             // Iron items (ordered by bars required - most bars first) - REAL LEVELS
             if (smithingLevel >= 33 && availableBars >= 5) { // Iron platebody requires level 33
                 System.out.println("[DEBUG] Selected Iron Platebody (5 bars, level 33)");
@@ -2038,7 +2042,7 @@ public class AIOMetalWorkerScript extends Script {
                 return 9; // Dagger (1 bar)
             }
         }
-        else if (metalType.equals("bronze")) {
+        else if (metalTypeLower.equals("bronze")) {
             // Bronze items (ordered by bars required) - REAL LEVELS
             if (smithingLevel >= 18 && availableBars >= 5) { // Bronze platebody requires level 18
                 System.out.println("[DEBUG] Selected Bronze Platebody (5 bars, level 18)");
@@ -2073,7 +2077,7 @@ public class AIOMetalWorkerScript extends Script {
                 return 9; // Dagger (1 bar)
             }
         }
-        else if (metalType.equals("steel")) {
+        else if (metalTypeLower.equals("steel")) {
             // Steel items (ordered by bars required) - REAL LEVELS
             if (smithingLevel >= 48 && availableBars >= 5) { // Steel platebody requires level 48
                 System.out.println("[DEBUG] Selected Steel Platebody (5 bars, level 48)");
@@ -2108,7 +2112,7 @@ public class AIOMetalWorkerScript extends Script {
                 return 9; // Dagger (1 bar)
             }
         }
-        else if (metalType.equals("mithril")) {
+        else if (metalTypeLower.equals("mithril")) {
             // Mithril items (ordered by bars required) - REAL LEVELS
             if (smithingLevel >= 68 && availableBars >= 5) { // Mithril platebody requires level 68
                 System.out.println("[DEBUG] Selected Mithril Platebody (5 bars, level 68)");
@@ -2142,6 +2146,81 @@ public class AIOMetalWorkerScript extends Script {
                 System.out.println("[DEBUG] Selected Mithril Dagger (1 bar, level 50)");
                 return 9; // Dagger (1 bar)
             }
+        }
+        else if (metalTypeLower.equals("adamantite") || metalTypeLower.equals("adamant")) {
+            // Adamantite items (ordered by bars required) - REAL LEVELS
+            if (smithingLevel >= 88 && availableBars >= 5) { // Adamantite platebody requires level 88
+                System.out.println("[DEBUG] Selected Adamantite Platebody (5 bars, level 88)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 86 && availableBars >= 3) { // Adamantite platelegs requires level 86
+                System.out.println("[DEBUG] Selected Adamantite Platelegs (3 bars, level 86)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 86 && availableBars >= 3) { // Adamantite plateskirt requires level 86
+                System.out.println("[DEBUG] Selected Adamantite Plateskirt (3 bars, level 86)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 84 && availableBars >= 3) { // Adamantite 2h sword requires level 84
+                System.out.println("[DEBUG] Selected Adamantite 2H Sword (3 bars, level 84)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 80 && availableBars >= 3) { // Adamantite battleaxe requires level 80
+                System.out.println("[DEBUG] Selected Adamantite Battleaxe (3 bars, level 80)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 76 && availableBars >= 2) { // Adamantite longsword requires level 76
+                System.out.println("[DEBUG] Selected Adamantite Longsword (2 bars, level 76)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 75 && availableBars >= 2) { // Adamantite scimitar requires level 75
+                System.out.println("[DEBUG] Selected Adamantite Scimitar (2 bars, level 75)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 70 && availableBars >= 1) { // Adamantite dagger requires level 70
+                System.out.println("[DEBUG] Selected Adamantite Dagger (1 bar, level 70)");
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else if (metalTypeLower.equals("runite") || metalTypeLower.equals("rune")) {
+            // Runite items (ordered by bars required) - REAL LEVELS
+            if (smithingLevel >= 99 && availableBars >= 5) { // Runite platebody requires level 99
+                System.out.println("[DEBUG] Selected Runite Platebody (5 bars, level 99)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 99 && availableBars >= 3) { // Runite platelegs requires level 99
+                System.out.println("[DEBUG] Selected Runite Platelegs (3 bars, level 99)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 99 && availableBars >= 3) { // Runite plateskirt requires level 99
+                System.out.println("[DEBUG] Selected Runite Plateskirt (3 bars, level 99)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 99 && availableBars >= 3) { // Runite 2h sword requires level 99
+                System.out.println("[DEBUG] Selected Runite 2H Sword (3 bars, level 99)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 95 && availableBars >= 3) { // Runite battleaxe requires level 95
+                System.out.println("[DEBUG] Selected Runite Battleaxe (3 bars, level 95)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 91 && availableBars >= 2) { // Runite longsword requires level 91
+                System.out.println("[DEBUG] Selected Runite Longsword (2 bars, level 91)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 90 && availableBars >= 2) { // Runite scimitar requires level 90
+                System.out.println("[DEBUG] Selected Runite Scimitar (2 bars, level 90)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 85 && availableBars >= 1) { // Runite dagger requires level 85
+                System.out.println("[DEBUG] Selected Runite Dagger (1 bar, level 85)");
+                return 9; // Dagger (1 bar)
+            }
+        }
+        else {
+            // Unknown metal type
+            System.out.println("[DEBUG] Unknown metal type: '" + metalTypeLower + "' - using fallback dagger selection");
+            updateStatus("Unknown metal type: " + metalTypeLower + ", falling back to basic smithing");
         }
 
         // Fallback to basic dagger if nothing else works and we have bars
