@@ -1992,64 +1992,165 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * EXPERT FIX: Gets the widget child ID for the best smithing item using AnvilItem enum mapping
-     * Based on proven Varrock Anvil plugin approach with proper child ID mapping
+     * EXPERT FIX: Gets the widget child ID for the best smithing item using REAL level requirements
+     * Based on actual RuneScape smithing levels and progressive bar usage optimization
      */
     private int getBestSmithingItemChildId(String metalType, int smithingLevel, int availableBars) {
         updateStatus("Determining best smithing item child ID for " + metalType + " (level " + smithingLevel + ")");
+        System.out.println("[DEBUG] Selecting smithing item for " + metalType + " with level " + smithingLevel + " and " + availableBars + " bars");
 
-        // EXPERT FIX: Use AnvilItem enum child IDs like working plugin
+        // LEVEL-AWARE PROGRESSION: Use actual RuneScape smithing level requirements
         // Progressive item selection - items that use more bars are better for efficiency
-        // Listed in order of preference (most bars first)
+        // Listed in order of preference (most bars first) with CORRECT level requirements
         
         if (metalType.equals("iron")) {
-            // Iron items (ordered by bars required - most bars first)
-            if (smithingLevel >= 40 && availableBars >= 5) return 22; // Platebody (5 bars) - AnvilItem.PLATE_BODY
-            if (smithingLevel >= 30 && availableBars >= 3) return 20; // Platelegs (3 bars) - AnvilItem.PLATE_LEGS  
-            if (smithingLevel >= 30 && availableBars >= 3) return 21; // Plateskirt (3 bars) - AnvilItem.PLATE_SKIRT
-            if (smithingLevel >= 20 && availableBars >= 3) return 13; // Two-handed sword (3 bars) - AnvilItem.TWO_HAND_SWORD
-            if (smithingLevel >= 15 && availableBars >= 3) return 17; // Battleaxe (3 bars) - AnvilItem.BATTLE_AXE
-            if (smithingLevel >= 10 && availableBars >= 2) return 12; // Longsword (2 bars) - AnvilItem.LONG_SWORD
-            if (smithingLevel >= 5 && availableBars >= 2) return 11; // Scimitar (2 bars) - AnvilItem.SCIMITAR
-            if (smithingLevel >= 1 && availableBars >= 1) return 9;  // Dagger (1 bar) - AnvilItem.DAGGER
+            // Iron items (ordered by bars required - most bars first) - REAL LEVELS
+            if (smithingLevel >= 33 && availableBars >= 5) { // Iron platebody requires level 33
+                System.out.println("[DEBUG] Selected Iron Platebody (5 bars, level 33)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 31 && availableBars >= 3) { // Iron platelegs requires level 31
+                System.out.println("[DEBUG] Selected Iron Platelegs (3 bars, level 31)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 31 && availableBars >= 3) { // Iron plateskirt requires level 31
+                System.out.println("[DEBUG] Selected Iron Plateskirt (3 bars, level 31)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 29 && availableBars >= 3) { // Iron 2h sword requires level 29
+                System.out.println("[DEBUG] Selected Iron 2H Sword (3 bars, level 29)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 25 && availableBars >= 3) { // Iron battleaxe requires level 25
+                System.out.println("[DEBUG] Selected Iron Battleaxe (3 bars, level 25)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 21 && availableBars >= 2) { // Iron longsword requires level 21
+                System.out.println("[DEBUG] Selected Iron Longsword (2 bars, level 21)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 20 && availableBars >= 2) { // Iron scimitar requires level 20
+                System.out.println("[DEBUG] Selected Iron Scimitar (2 bars, level 20)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 15 && availableBars >= 1) { // Iron dagger requires level 15
+                System.out.println("[DEBUG] Selected Iron Dagger (1 bar, level 15)");
+                return 9; // Dagger (1 bar)
+            }
         }
         else if (metalType.equals("bronze")) {
-            // Bronze items (ordered by bars required)
-            if (smithingLevel >= 18 && availableBars >= 5) return 22; // Platebody (5 bars)
-            if (smithingLevel >= 16 && availableBars >= 3) return 20; // Platelegs (3 bars)
-            if (smithingLevel >= 16 && availableBars >= 3) return 21; // Plateskirt (3 bars)
-            if (smithingLevel >= 14 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
-            if (smithingLevel >= 9 && availableBars >= 3) return 17;  // Battleaxe (3 bars)
-            if (smithingLevel >= 6 && availableBars >= 2) return 12;  // Longsword (2 bars)
-            if (smithingLevel >= 4 && availableBars >= 2) return 11;  // Scimitar (2 bars)
-            if (smithingLevel >= 1 && availableBars >= 1) return 9;   // Dagger (1 bar)
+            // Bronze items (ordered by bars required) - REAL LEVELS
+            if (smithingLevel >= 18 && availableBars >= 5) { // Bronze platebody requires level 18
+                System.out.println("[DEBUG] Selected Bronze Platebody (5 bars, level 18)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze platelegs requires level 16
+                System.out.println("[DEBUG] Selected Bronze Platelegs (3 bars, level 16)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze plateskirt requires level 16
+                System.out.println("[DEBUG] Selected Bronze Plateskirt (3 bars, level 16)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 14 && availableBars >= 3) { // Bronze 2h sword requires level 14
+                System.out.println("[DEBUG] Selected Bronze 2H Sword (3 bars, level 14)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 10 && availableBars >= 3) { // Bronze battleaxe requires level 10
+                System.out.println("[DEBUG] Selected Bronze Battleaxe (3 bars, level 10)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 6 && availableBars >= 2) { // Bronze longsword requires level 6
+                System.out.println("[DEBUG] Selected Bronze Longsword (2 bars, level 6)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 5 && availableBars >= 2) { // Bronze scimitar requires level 5
+                System.out.println("[DEBUG] Selected Bronze Scimitar (2 bars, level 5)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 1 && availableBars >= 1) { // Bronze dagger requires level 1
+                System.out.println("[DEBUG] Selected Bronze Dagger (1 bar, level 1)");
+                return 9; // Dagger (1 bar)
+            }
         }
         else if (metalType.equals("steel")) {
-            // Steel items (ordered by bars required)
-            if (smithingLevel >= 48 && availableBars >= 5) return 22; // Platebody (5 bars)
-            if (smithingLevel >= 46 && availableBars >= 3) return 20; // Platelegs (3 bars)
-            if (smithingLevel >= 46 && availableBars >= 3) return 21; // Plateskirt (3 bars)
-            if (smithingLevel >= 44 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
-            if (smithingLevel >= 41 && availableBars >= 3) return 17; // Battleaxe (3 bars)
-            if (smithingLevel >= 36 && availableBars >= 2) return 12; // Longsword (2 bars)
-            if (smithingLevel >= 34 && availableBars >= 2) return 11; // Scimitar (2 bars)
-            if (smithingLevel >= 30 && availableBars >= 1) return 9;  // Dagger (1 bar)
+            // Steel items (ordered by bars required) - REAL LEVELS
+            if (smithingLevel >= 48 && availableBars >= 5) { // Steel platebody requires level 48
+                System.out.println("[DEBUG] Selected Steel Platebody (5 bars, level 48)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 46 && availableBars >= 3) { // Steel platelegs requires level 46
+                System.out.println("[DEBUG] Selected Steel Platelegs (3 bars, level 46)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 46 && availableBars >= 3) { // Steel plateskirt requires level 46
+                System.out.println("[DEBUG] Selected Steel Plateskirt (3 bars, level 46)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 44 && availableBars >= 3) { // Steel 2h sword requires level 44
+                System.out.println("[DEBUG] Selected Steel 2H Sword (3 bars, level 44)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 40 && availableBars >= 3) { // Steel battleaxe requires level 40
+                System.out.println("[DEBUG] Selected Steel Battleaxe (3 bars, level 40)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 36 && availableBars >= 2) { // Steel longsword requires level 36
+                System.out.println("[DEBUG] Selected Steel Longsword (2 bars, level 36)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 35 && availableBars >= 2) { // Steel scimitar requires level 35
+                System.out.println("[DEBUG] Selected Steel Scimitar (2 bars, level 35)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 30 && availableBars >= 1) { // Steel dagger requires level 30
+                System.out.println("[DEBUG] Selected Steel Dagger (1 bar, level 30)");
+                return 9; // Dagger (1 bar)
+            }
         }
         else if (metalType.equals("mithril")) {
-            // Mithril items (ordered by bars required)
-            if (smithingLevel >= 68 && availableBars >= 5) return 22; // Platebody (5 bars)
-            if (smithingLevel >= 66 && availableBars >= 3) return 20; // Platelegs (3 bars)
-            if (smithingLevel >= 66 && availableBars >= 3) return 21; // Plateskirt (3 bars)
-            if (smithingLevel >= 64 && availableBars >= 3) return 13; // Two-handed sword (3 bars)
-            if (smithingLevel >= 61 && availableBars >= 3) return 17; // Battleaxe (3 bars)
-            if (smithingLevel >= 56 && availableBars >= 2) return 12; // Longsword (2 bars)
-            if (smithingLevel >= 54 && availableBars >= 2) return 11; // Scimitar (2 bars)
-            if (smithingLevel >= 50 && availableBars >= 1) return 9;  // Dagger (1 bar)
+            // Mithril items (ordered by bars required) - REAL LEVELS
+            if (smithingLevel >= 68 && availableBars >= 5) { // Mithril platebody requires level 68
+                System.out.println("[DEBUG] Selected Mithril Platebody (5 bars, level 68)");
+                return 22; // Platebody (5 bars)
+            }
+            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril platelegs requires level 66
+                System.out.println("[DEBUG] Selected Mithril Platelegs (3 bars, level 66)");
+                return 20; // Platelegs (3 bars)
+            }
+            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril plateskirt requires level 66
+                System.out.println("[DEBUG] Selected Mithril Plateskirt (3 bars, level 66)");
+                return 21; // Plateskirt (3 bars)
+            }
+            if (smithingLevel >= 64 && availableBars >= 3) { // Mithril 2h sword requires level 64
+                System.out.println("[DEBUG] Selected Mithril 2H Sword (3 bars, level 64)");
+                return 13; // Two-handed sword (3 bars)
+            }
+            if (smithingLevel >= 60 && availableBars >= 3) { // Mithril battleaxe requires level 60
+                System.out.println("[DEBUG] Selected Mithril Battleaxe (3 bars, level 60)");
+                return 17; // Battleaxe (3 bars)
+            }
+            if (smithingLevel >= 56 && availableBars >= 2) { // Mithril longsword requires level 56
+                System.out.println("[DEBUG] Selected Mithril Longsword (2 bars, level 56)");
+                return 12; // Longsword (2 bars)
+            }
+            if (smithingLevel >= 55 && availableBars >= 2) { // Mithril scimitar requires level 55
+                System.out.println("[DEBUG] Selected Mithril Scimitar (2 bars, level 55)");
+                return 11; // Scimitar (2 bars)
+            }
+            if (smithingLevel >= 50 && availableBars >= 1) { // Mithril dagger requires level 50
+                System.out.println("[DEBUG] Selected Mithril Dagger (1 bar, level 50)");
+                return 9; // Dagger (1 bar)
+            }
         }
 
-        // Fallback to basic dagger if nothing else works
-        if (availableBars >= 1) return 9; // AnvilItem.DAGGER
+        // Fallback to basic dagger if nothing else works and we have bars
+        if (availableBars >= 1) {
+            System.out.println("[DEBUG] Fallback to basic dagger with " + availableBars + " bars");
+            return 9; // AnvilItem.DAGGER
+        }
         
+        System.out.println("[DEBUG] No suitable item found - no bars available");
         return -1; // No suitable item found
     }
 
