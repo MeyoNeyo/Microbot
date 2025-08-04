@@ -151,11 +151,13 @@ public class AIOMetalWorkerOverlay extends OverlayPanel {
             }
             
         } catch (Exception ex) {
+            /*
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Error:")
                     .right("Overlay rendering failed")
                     .rightColor(Color.RED)
                     .build());
+            */
         }
         
         return super.render(graphics);
