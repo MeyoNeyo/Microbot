@@ -3548,8 +3548,6 @@ public class AIOMetalWorkerScript extends Script {
         }
     }
 
-    // MYTHICAL-LEVEL HELPER METHODS
-
     /**
      * Progress tracking class
      */
