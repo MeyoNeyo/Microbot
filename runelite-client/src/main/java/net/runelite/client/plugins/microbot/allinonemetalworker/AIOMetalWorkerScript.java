@@ -54,7 +54,7 @@ public class AIOMetalWorkerScript extends Script {
     private WorldPoint currentMiningArea = null;
 
     // Al Kharid furnace location
-    private static final WorldPoint FURNACE_LOCATION = new WorldPoint(3275, 3185, 0);
+    private static final WorldPoint FURNACE_LOCATION = new WorldPoint(3274, 3186, 0);
 
     // Varrock anvil location
     private static final WorldPoint ANVIL_LOCATION = new WorldPoint(3189, 3425, 0);
@@ -834,25 +834,37 @@ public class AIOMetalWorkerScript extends Script {
 
         WorldPoint destination = determineWalkingDestination();
 
+        // OPTIMIZATION: Apply 4-tile offset for banks, furnace, and anvil for faster execution
+        WorldPoint optimizedDestination = getOptimizedDestination(destination);
+
         if (config.enableDebugLogs()) {
             Microbot.log("=== WALKING PHASE DEBUG ===");
             Microbot.log("Current phase: " + currentPhase);
             Microbot.log("Starting phase: " + config.startingPhase());
             Microbot.log("Player location: " + Rs2Player.getWorldLocation());
-            Microbot.log("Determined destination: " + destination);
-            if (destination != null) {
+            Microbot.log("Original destination: " + destination);
+            Microbot.log("Optimized destination: " + optimizedDestination);
+            if (optimizedDestination != null) {
                 Microbot.log("Destination name: " + getLocationName(destination));
-                Microbot.log("Distance to destination: " + Rs2Player.getWorldLocation().distanceTo(destination));
+                Microbot.log("Distance to optimized destination: " + Rs2Player.getWorldLocation().distanceTo(optimizedDestination));
             }
         }
 
-        if (destination != null) {
-            updateStatus("Walking to " + getLocationName(destination));
+        if (optimizedDestination != null) {
+            String destinationName = getLocationName(destination);
+            boolean isOptimized = isOptimizedDestination(destination);
+            String walkingMessage = "Walking to " + destinationName;
+            if (isOptimized) {
+                int tileOffset = getTileOffsetForDestination(destination);
+                walkingMessage += " (optimized - stopping " + tileOffset + " tiles away)";
+            }
+            updateStatus(walkingMessage);
 
-            // Check if already close to destination
-            if (Rs2Player.getWorldLocation().distanceTo(destination) <= 3) {
+            // OPTIMIZATION: Use appropriate distance check for different destinations
+            int proximityDistance = getArrivalDistanceForDestination(destination);
+            if (Rs2Player.getWorldLocation().distanceTo(optimizedDestination) <= proximityDistance) {
                 if (config.enableDebugLogs()) {
-                    Microbot.log("WALKING: Already close to destination, updating phase");
+                    Microbot.log("WALKING: Already close to optimized destination, updating phase");
                 }
                 updatePhaseAfterWalking(destination);
                 return;
@@ -864,9 +876,13 @@ public class AIOMetalWorkerScript extends Script {
             int maxRetries = 3;
 
             while (!walkingStarted && retryCount < maxRetries && !isShuttingDown) {
-                if (Rs2Walker.walkTo(destination)) {
+                if (Rs2Walker.walkTo(optimizedDestination)) {
                     walkingStarted = true;
-                    updateStatus("Walking started to " + getLocationName(destination));
+                    String startMessage = "Walking started to " + destinationName;
+                    if (isOptimizedDestination(destination)) {
+                        startMessage += " (optimized path)";
+                    }
+                    updateStatus(startMessage);
                 } else {
                     retryCount++;
                     updateStatus("Walk attempt " + retryCount + " failed, retrying...");
@@ -878,9 +894,23 @@ public class AIOMetalWorkerScript extends Script {
                 // Wait for walking to start
                 sleep(1000, 1500);
 
-                // Wait for arrival with timeout
+                // OPTIMIZATION: Enhanced arrival detection for optimized destinations
                 int waitTime = 0;
-                while (Rs2Player.isMoving() && waitTime < 30000) {
+                int maxWaitTime = 30000; // 30 seconds max
+                int arrivalDistance = getArrivalDistanceForDestination(destination);
+                
+                while (Rs2Player.isMoving() && waitTime < maxWaitTime) {
+                    // Check if we're close enough to the original destination for optimized routes
+                    if (isOptimizedDestination(destination)) {
+                        int distanceToOriginal = Rs2Player.getWorldLocation().distanceTo(destination);
+                        if (distanceToOriginal <= arrivalDistance) {
+                            if (config.enableDebugLogs()) {
+                                Microbot.log("OPTIMIZATION: Arrived within " + distanceToOriginal + " tiles of " + getLocationName(destination));
+                            }
+                            break;
+                        }
+                    }
+                    
                     sleep(500, 800);
                     waitTime += 600;
                 }
@@ -3610,5 +3640,137 @@ public class AIOMetalWorkerScript extends Script {
         public void addSmithingXp(int xp) {
             this.smithingXpGained += xp;
         }
+    }
+
+    /**
+     * OPTIMIZATION: Returns an optimized destination with different tile distances for different locations
+     * - Furnace and Anvil: 2 tiles away for better walking behavior
+     * - Banks: 4 tiles away for faster execution
+     */
+    private WorldPoint getOptimizedDestination(WorldPoint originalDestination) {
+        if (originalDestination == null) {
+            return null;
+        }
+
+        // Check if this is a destination that should be optimized
+        if (isOptimizedDestination(originalDestination)) {
+            WorldPoint playerLocation = Rs2Player.getWorldLocation();
+            
+            // Calculate direction from player to destination
+            int deltaX = originalDestination.getX() - playerLocation.getX();
+            int deltaY = originalDestination.getY() - playerLocation.getY();
+            
+            // ENHANCED: Use different tile distances based on destination type
+            int tileOffset = getTileOffsetForDestination(originalDestination);
+            
+            // Normalize direction and apply appropriate tile offset
+            int offsetX = 0;
+            int offsetY = 0;
+            
+            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                // Moving more horizontally
+                offsetX = deltaX > 0 ? -tileOffset : tileOffset;
+            } else {
+                // Moving more vertically  
+                offsetY = deltaY > 0 ? -tileOffset : tileOffset;
+            }
+            
+            WorldPoint optimizedDestination = new WorldPoint(
+                originalDestination.getX() + offsetX,
+                originalDestination.getY() + offsetY,
+                originalDestination.getPlane()
+            );
+            
+            if (config.enableDebugLogs()) {
+                Microbot.log("OPTIMIZATION: Original destination: " + originalDestination);
+                Microbot.log("OPTIMIZATION: Using " + tileOffset + " tile offset for " + getLocationName(originalDestination));
+                Microbot.log("OPTIMIZATION: Optimized destination: " + optimizedDestination + " (offset: " + offsetX + "," + offsetY + ")");
+            }
+            
+            return optimizedDestination;
+        }
+        
+        // Return original destination for non-optimized locations (mining areas)
+        return originalDestination;
+    }
+
+    /**
+     * OPTIMIZATION: Checks if a destination should be optimized with tile offset
+     * Returns true for banks, furnace, and anvil locations
+     */
+    private boolean isOptimizedDestination(WorldPoint destination) {
+        if (destination == null) {
+            return false;
+        }
+        
+        // Check if destination matches key locations that should be optimized
+        return destination.equals(FURNACE_LOCATION) ||
+               destination.equals(ANVIL_LOCATION) ||
+               destination.equals(LUMBRIDGE_BANK) ||
+               destination.equals(AL_KHARID_BANK) ||
+               isNearBankLocation(destination);
+    }
+
+    /**
+     * OPTIMIZATION: Returns the appropriate tile offset for different destination types
+     * - Furnace and Anvil: 2 tiles for better walking behavior
+     * - Banks: 4 tiles for faster execution
+     */
+    private int getTileOffsetForDestination(WorldPoint destination) {
+        if (destination == null) {
+            return 4; // Default offset
+        }
+        
+        // Use 2 tiles for furnace and anvil
+        if (destination.equals(FURNACE_LOCATION) || destination.equals(ANVIL_LOCATION)) {
+            return 1;
+        }
+        
+        // Use 4 tiles for banks
+        if (destination.equals(LUMBRIDGE_BANK) || 
+            destination.equals(AL_KHARID_BANK) || 
+            isNearBankLocation(destination)) {
+            return 4;
+        }
+        
+        // Default to 4 tiles for other optimized destinations
+        return 4;
+    }
+
+    /**
+     * OPTIMIZATION: Returns the appropriate arrival distance for different destination types
+     * - Furnace and Anvil: 4 tiles (2 tile offset + 2 tile buffer)
+     * - Banks: 8 tiles (4 tile offset + 4 tile buffer)
+     * - Non-optimized: 5 tiles (default)
+     */
+    private int getArrivalDistanceForDestination(WorldPoint destination) {
+        if (!isOptimizedDestination(destination)) {
+            return 5; // Default for non-optimized destinations
+        }
+        
+        // Use 4 tiles arrival distance for furnace and anvil (2 + 2 buffer)
+        if (destination.equals(FURNACE_LOCATION) || destination.equals(ANVIL_LOCATION)) {
+            return 4;
+        }
+        
+        // Use 8 tiles arrival distance for banks (4 + 4 buffer)
+        if (destination.equals(LUMBRIDGE_BANK) || 
+            destination.equals(AL_KHARID_BANK) || 
+            isNearBankLocation(destination)) {
+            return 8;
+        }
+        
+        // Default to 8 tiles for other optimized destinations
+        return 8;
+    }
+
+    /**
+     * OPTIMIZATION: Helper method to check if destination is near any bank location
+     */
+    private boolean isNearBankLocation(WorldPoint destination) {
+        // Check common bank locations with small tolerance
+        return destination.distanceTo(LUMBRIDGE_BANK) <= 2 ||
+               destination.distanceTo(AL_KHARID_BANK) <= 2 ||
+               destination.distanceTo(new WorldPoint(3095, 3245, 0)) <= 2; // Draynor bank
     }
 }

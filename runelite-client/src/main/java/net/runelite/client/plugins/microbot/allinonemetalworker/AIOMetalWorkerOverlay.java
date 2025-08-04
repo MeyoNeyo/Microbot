@@ -107,6 +107,7 @@ public class AIOMetalWorkerOverlay extends OverlayPanel {
                 
                 addEmptyLine();
                 
+                /*
                 // XP tracking
                 panelComponent.getChildren().add(LineComponent.builder()
                         .left("Mining XP:")
@@ -121,7 +122,8 @@ public class AIOMetalWorkerOverlay extends OverlayPanel {
                         .build());
                 
                 addEmptyLine();
-                
+                */
+
                 // Runtime information
                 if (progress.getStartTime() != null) {
                     Duration runtime = Duration.between(progress.getStartTime(), Instant.now());
