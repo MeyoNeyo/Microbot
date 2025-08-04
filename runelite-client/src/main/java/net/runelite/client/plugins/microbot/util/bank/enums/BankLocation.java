@@ -18,6 +18,7 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 public enum BankLocation {
     ALDARIN(new WorldPoint(1398, 2927, 0), true),
     AL_KHARID(new WorldPoint(3270, 3166, 0), false),
+    AL_KHARID_EMIRS_ARENA(new WorldPoint(3381, 3268, 0), false),
     ARCEUUS(new WorldPoint(1624, 3745, 0), true),
     ARDOUGNE_NORTH(new WorldPoint(2616, 3332, 0), true),
     ARDOUGNE_SOUTH(new WorldPoint(2655, 3283, 0), true),
