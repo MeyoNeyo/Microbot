@@ -47,7 +47,7 @@ public class AIOMetalWorkerScript extends Script {
 
     // Mining locations (adaptive - will use current location if ores are nearby)
     private static final WorldPoint LUMBRIDGE_MINING_AREA = new WorldPoint(3230, 3148, 0);
-    private static final WorldPoint AL_KHARID_MINING_AREA = new WorldPoint(3302, 3315, 0);
+    private static final WorldPoint AL_KHARID_MINING_AREA = new WorldPoint(3295, 3310, 0);
     private static final int MINING_RADIUS = 15;
 
     // Current mining area (dynamic based on player location)
@@ -1523,25 +1523,36 @@ public class AIOMetalWorkerScript extends Script {
     /**
      * Gets list of essential tools to keep in inventory (only unwielded tools)
      * FIXED: Only keeps pickaxes that are not equipped/wielded
+     * ENHANCED: Considers next phase to properly handle smithing→mining transitions
      */
     private String[] getEssentialTools() {
         List<String> tools = new ArrayList<>();
+        ProcessPhase nextPhase = determineNextPhase();
 
-        // FIXED: Only keep pickaxe if it's not currently equipped
-        // This allows depositing of extra pickaxes while keeping one for mining
+        // ENHANCED: Only keep pickaxe if not equipped AND if we need it for the next phase
         if (!Rs2Equipment.isWearing("pickaxe")) {
-            // No pickaxe equipped, keep one in inventory for mining
-            tools.add("pickaxe");
+            // Keep pickaxe for mining or walking to mining area
+            if (nextPhase == ProcessPhase.MINING || 
+                (nextPhase == ProcessPhase.WALKING && willNeedPickaxe())) {
+                tools.add("pickaxe");
+                if (config.enableDebugLogs()) {
+                    Microbot.log("Keeping pickaxe for next phase: " + nextPhase);
+                }
+            }
         }
-        // If pickaxe is equipped, don't keep any in inventory - deposit all
 
-        // Keep hammer if we're smithing (hammers can't be equipped, so always keep)
-        if (config.smithItems()) {
+        // ENHANCED: Only keep hammer if we're actually going to smith
+        // This ensures hammer gets deposited when switching from smithing to mining
+        if (config.smithItems() && willNeedHammer(nextPhase)) {
             tools.add("Hammer");
+            if (config.enableDebugLogs()) {
+                Microbot.log("Keeping hammer for next phase: " + nextPhase);
+            }
         }
 
         if (config.enableDebugLogs()) {
             Microbot.log("Essential tools to keep: " + Arrays.toString(tools.toArray()));
+            Microbot.log("Next phase: " + nextPhase + ", Current phase: " + currentPhase);
             Microbot.log("Pickaxe equipped: " + Rs2Equipment.isWearing("pickaxe"));
         }
 
@@ -1549,21 +1560,67 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
+     * Determines if we will need a pickaxe for the current transition
+     */
+    private boolean willNeedPickaxe() {
+        // Check if we're transitioning to mining from banking/smithing
+        int totalOresMined = progress.getOresMined();
+        int targetQuantity = config.targetQuantity();
+        
+        // Need pickaxe if we haven't reached target or if we're in continuous mode
+        return totalOresMined < targetQuantity || 
+               shouldStartNewMiningCycle() ||
+               needsMoreOresForSmelting();
+    }
+
+    /**
+     * Determines if we will need a hammer for the next phase
+     */
+    private boolean willNeedHammer(ProcessPhase nextPhase) {
+        // Only keep hammer if we're going to smithing or walking to anvil
+        if (nextPhase == ProcessPhase.SMITHING) {
+            return true;
+        }
+        
+        // If walking, check if we have bars to smith (going to anvil)
+        if (nextPhase == ProcessPhase.WALKING && needsBarsForSmithing()) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
      * Withdraws required tools based on next activity
+     * ENHANCED: Better handling of smithing→mining transitions
      */
     private void withdrawRequiredTools() {
         // Determine what phase we'll be doing next
         ProcessPhase nextPhase = determineNextPhase();
 
-        // Withdraw pickaxe if needed for mining and not equipped
-        if ((nextPhase == ProcessPhase.MINING || config.withdrawPickaxe()) && !hasPickaxe()) {
+        if (config.enableDebugLogs()) {
+            Microbot.log("=== TOOL WITHDRAWAL ANALYSIS ===");
+            Microbot.log("Next phase: " + nextPhase);
+            Microbot.log("Current phase: " + currentPhase);
+            Microbot.log("Has pickaxe: " + hasPickaxe());
+            Microbot.log("Has hammer: " + hasHammer());
+            Microbot.log("Will need pickaxe: " + willNeedPickaxe());
+            Microbot.log("Will need hammer: " + willNeedHammer(nextPhase));
+        }
+
+        // ENHANCED: Withdraw pickaxe if transitioning to mining-related phases
+        if (willNeedPickaxe() && !hasPickaxe()) {
+            updateStatus("Transitioning to mining - withdrawing pickaxe");
             if (!withdrawBestPickaxe()) {
                 Rs2Bank.withdrawOne("Bronze pickaxe"); // Fallback
+                updateStatus("Withdrew fallback Bronze pickaxe");
+            } else {
+                updateStatus("Withdrew best available pickaxe");
             }
         }
 
-        // Only withdraw hammer if we're actually going to be smithing (not smelting!)
-        if (nextPhase == ProcessPhase.SMITHING && config.smithItems() && !hasHammer()) {
+        // ENHANCED: Only withdraw hammer if we're actually going to be smithing
+        if (willNeedHammer(nextPhase) && !hasHammer()) {
             Rs2Bank.withdrawOne("Hammer");
             updateStatus("Withdrawing hammer for smithing");
         }
@@ -2765,89 +2822,6 @@ public class AIOMetalWorkerScript extends Script {
     }
 
     /**
-     * EXPERT FIX: Selects smithing option using proven Varrock Anvil approach
-     * Uses specific widget IDs and proper anvil interface detection like working plugin
-     * 
-     * @return true if option was successfully selected
-     */
-    private boolean selectBestSmithingOption() {
-        try {
-            updateStatus("Waiting for anvil interface (Widget 312)...");
-            System.out.println("[DEBUG] Checking for anvil interface widget 312,1");
-            
-            // EXPERT FIX: Use specific widget ID like working Varrock plugin (312 = anvil interface)
-            boolean interfaceFound = sleepUntil(() -> {
-                boolean hasWidget = Rs2Widget.getWidget(312, 1) != null;
-                if (!hasWidget) {
-                    System.out.println("[DEBUG] Widget 312,1 not found yet...");
-                } else {
-                    System.out.println("[DEBUG] Widget 312,1 FOUND!");
-                }
-                return hasWidget;
-            }, 10000);
-            
-            if (!interfaceFound) {
-                updateStatus("Anvil interface (312,1) not detected - retrying anvil interaction");
-                System.out.println("[DEBUG] Failed to find anvil interface widget 312,1 after 10 seconds");
-                return false;
-            }
-
-            sleep(186, 480); // Match working plugin timing
-
-            // Get current smithing level and available bars
-            int currentSmithingLevel = Rs2Player.getRealSkillLevel(Skill.SMITHING);
-            int availableBars = Rs2Inventory.count(config.metalType().getBarName());
-            String metalType = config.metalType().getDisplayName().toLowerCase();
-
-            updateStatus("Anvil interface detected! Level: " + currentSmithingLevel + ", Bars: " + availableBars + ", Metal: " + metalType);
-            System.out.println("[DEBUG] Smithing level: " + currentSmithingLevel + ", Available bars: " + availableBars + ", Metal: " + metalType);
-
-            // EXPERT FIX: Select "All" quantity first (like working plugin does)
-            // Check if we need to set quantity to "All" (Varbit 2224)
-            int currentVarbit = Microbot.getVarbitPlayerValue(2224);
-            System.out.println("[DEBUG] Current varbit 2224 value: " + currentVarbit + ", available bars: " + availableBars);
-            
-            if (currentVarbit < availableBars) {
-                updateStatus("Setting quantity to 'All' (Widget 312,7)");
-                System.out.println("[DEBUG] Clicking 'All' button at widget 312,7");
-                Rs2Widget.clickWidget(312, 7);
-                sleep(186, 480);
-            }
-
-            // EXPERT FIX: Get the best smithing item child ID based on level and bars
-            int itemChildId = getBestSmithingItemChildId(metalType, currentSmithingLevel, availableBars);
-            
-            if (itemChildId == -1) {
-                updateStatus("No suitable smithing items found for current level");
-                System.out.println("[DEBUG] No suitable items found for level " + currentSmithingLevel + " with " + availableBars + " bars");
-                return false;
-            }
-
-            updateStatus("Clicking smithing item at child ID: " + itemChildId);
-            System.out.println("[DEBUG] Clicking widget 312," + itemChildId);
-
-            // EXPERT FIX: Click the specific widget child ID (like working plugin)
-            boolean itemSelected = Rs2Widget.clickWidget(312, itemChildId);
-            
-            if (itemSelected) {
-                updateStatus("Successfully selected smithing item (Widget 312," + itemChildId + ")");
-                System.out.println("[DEBUG] Successfully clicked widget 312," + itemChildId);
-                sleep(186, 480); // Match working plugin timing
-                return true;
-            } else {
-                updateStatus("Failed to click smithing item at child ID: " + itemChildId);
-                System.out.println("[DEBUG] Failed to click widget 312," + itemChildId);
-                return false;
-            }
-
-        } catch (Exception e) {
-            handleError("Failed to select smithing option", e);
-            System.out.println("[DEBUG] Exception in selectBestSmithingOption: " + e.getMessage());
-            return false;
-        }
-    }
-
-    /**
      * DYNAMIC LEVEL PROGRESSION: Gets the widget child ID for the best smithing item with real-time level checking
      * This method evaluates the CURRENT smithing level each time to select progressively better items
      * Based on actual RuneScape smithing levels and progressive bar usage optimization
@@ -3109,327 +3083,6 @@ public class AIOMetalWorkerScript extends Script {
         return -1; // No suitable item found
     }
 
-    /**
-     * EXPERT FIX: Gets the widget child ID for the best smithing item using REAL level requirements
-     * Based on actual RuneScape smithing levels and progressive bar usage optimization
-     */
-    private int getBestSmithingItemChildId(String metalType, int smithingLevel, int availableBars) {
-        updateStatus("Determining best smithing item child ID for " + metalType + " (level " + smithingLevel + ")");
-        System.out.println("[DEBUG] Selecting smithing item for " + metalType + " with level " + smithingLevel + " and " + availableBars + " bars");
-        System.out.println("[DEBUG] Current player smithing level: " + Rs2Player.getRealSkillLevel(Skill.SMITHING));
-
-        // LEVEL-AWARE PROGRESSION: Use actual RuneScape smithing level requirements
-        // Progressive item selection - items that use more bars are better for efficiency
-        // Listed in order of preference (most bars first) with CORRECT level requirements
-        
-        String metalTypeLower = metalType.toLowerCase();
-        System.out.println("[DEBUG] Metal type (lowercase): '" + metalTypeLower + "'");
-        
-        if (metalTypeLower.equals("iron")) {
-            // Iron items (ordered by bars required - most bars first) - REAL LEVELS
-            if (smithingLevel >= 33 && availableBars >= 5) { // Iron platebody requires level 33
-                System.out.println("[DEBUG] Selected Iron Platebody (5 bars, level 33)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 31 && availableBars >= 3) { // Iron platelegs requires level 31
-                System.out.println("[DEBUG] Selected Iron Platelegs (3 bars, level 31)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 31 && availableBars >= 3) { // Iron plateskirt requires level 31
-                System.out.println("[DEBUG] Selected Iron Plateskirt (3 bars, level 31)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 29 && availableBars >= 3) { // Iron 2h sword requires level 29
-                System.out.println("[DEBUG] Selected Iron 2H Sword (3 bars, level 29)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 25 && availableBars >= 3) { // Iron battleaxe requires level 25
-                System.out.println("[DEBUG] Selected Iron Battleaxe (3 bars, level 25)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 21 && availableBars >= 2) { // Iron longsword requires level 21
-                System.out.println("[DEBUG] Selected Iron Longsword (2 bars, level 21)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 20 && availableBars >= 2) { // Iron scimitar requires level 20
-                System.out.println("[DEBUG] Selected Iron Scimitar (2 bars, level 20)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 15 && availableBars >= 1) { // Iron dagger requires level 15
-                System.out.println("[DEBUG] Selected Iron Dagger (1 bar, level 15)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else if (metalTypeLower.equals("bronze")) {
-            // Bronze items (ordered by bars required) - REAL LEVELS
-            if (smithingLevel >= 18 && availableBars >= 5) { // Bronze platebody requires level 18
-                System.out.println("[DEBUG] Selected Bronze Platebody (5 bars, level 18)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze platelegs requires level 16
-                System.out.println("[DEBUG] Selected Bronze Platelegs (3 bars, level 16)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 16 && availableBars >= 3) { // Bronze plateskirt requires level 16
-                System.out.println("[DEBUG] Selected Bronze Plateskirt (3 bars, level 16)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 14 && availableBars >= 3) { // Bronze 2h sword requires level 14
-                System.out.println("[DEBUG] Selected Bronze 2H Sword (3 bars, level 14)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 10 && availableBars >= 3) { // Bronze battleaxe requires level 10
-                System.out.println("[DEBUG] Selected Bronze Battleaxe (3 bars, level 10)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 6 && availableBars >= 2) { // Bronze longsword requires level 6
-                System.out.println("[DEBUG] Selected Bronze Longsword (2 bars, level 6)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 5 && availableBars >= 2) { // Bronze scimitar requires level 5
-                System.out.println("[DEBUG] Selected Bronze Scimitar (2 bars, level 5)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 1 && availableBars >= 1) { // Bronze dagger requires level 1
-                System.out.println("[DEBUG] Selected Bronze Dagger (1 bar, level 1)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else if (metalTypeLower.equals("steel")) {
-            // Steel items (ordered by bars required) - REAL LEVELS
-            if (smithingLevel >= 48 && availableBars >= 5) { // Steel platebody requires level 48
-                System.out.println("[DEBUG] Selected Steel Platebody (5 bars, level 48)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 46 && availableBars >= 3) { // Steel platelegs requires level 46
-                System.out.println("[DEBUG] Selected Steel Platelegs (3 bars, level 46)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 46 && availableBars >= 3) { // Steel plateskirt requires level 46
-                System.out.println("[DEBUG] Selected Steel Plateskirt (3 bars, level 46)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 44 && availableBars >= 3) { // Steel 2h sword requires level 44
-                System.out.println("[DEBUG] Selected Steel 2H Sword (3 bars, level 44)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 40 && availableBars >= 3) { // Steel battleaxe requires level 40
-                System.out.println("[DEBUG] Selected Steel Battleaxe (3 bars, level 40)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 36 && availableBars >= 2) { // Steel longsword requires level 36
-                System.out.println("[DEBUG] Selected Steel Longsword (2 bars, level 36)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 35 && availableBars >= 2) { // Steel scimitar requires level 35
-                System.out.println("[DEBUG] Selected Steel Scimitar (2 bars, level 35)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 30 && availableBars >= 1) { // Steel dagger requires level 30
-                System.out.println("[DEBUG] Selected Steel Dagger (1 bar, level 30)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else if (metalTypeLower.equals("mithril")) {
-            // Mithril items (ordered by bars required) - REAL LEVELS
-            if (smithingLevel >= 68 && availableBars >= 5) { // Mithril platebody requires level 68
-                System.out.println("[DEBUG] Selected Mithril Platebody (5 bars, level 68)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril platelegs requires level 66
-                System.out.println("[DEBUG] Selected Mithril Platelegs (3 bars, level 66)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 66 && availableBars >= 3) { // Mithril plateskirt requires level 66
-                System.out.println("[DEBUG] Selected Mithril Plateskirt (3 bars, level 66)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 64 && availableBars >= 3) { // Mithril 2h sword requires level 64
-                System.out.println("[DEBUG] Selected Mithril 2H Sword (3 bars, level 64)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 60 && availableBars >= 3) { // Mithril battleaxe requires level 60
-                System.out.println("[DEBUG] Selected Mithril Battleaxe (3 bars, level 60)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 56 && availableBars >= 2) { // Mithril longsword requires level 56
-                System.out.println("[DEBUG] Selected Mithril Longsword (2 bars, level 56)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 55 && availableBars >= 2) { // Mithril scimitar requires level 55
-                System.out.println("[DEBUG] Selected Mithril Scimitar (2 bars, level 55)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 50 && availableBars >= 1) { // Mithril dagger requires level 50
-                System.out.println("[DEBUG] Selected Mithril Dagger (1 bar, level 50)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else if (metalTypeLower.equals("adamantite") || metalTypeLower.equals("adamant")) {
-            // Adamantite items (ordered by bars required - most bars first) - REAL LEVELS
-            if (smithingLevel >= 88 && availableBars >= 5) { // Adamantite platebody requires level 88
-                System.out.println("[DEBUG] Selected Adamantite Platebody (5 bars, level 88)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 86 && availableBars >= 3) { // Adamantite platelegs requires level 86
-                System.out.println("[DEBUG] Selected Adamantite Platelegs (3 bars, level 86)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 86 && availableBars >= 3) { // Adamantite plateskirt requires level 86
-                System.out.println("[DEBUG] Selected Adamantite Plateskirt (3 bars, level 86)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 84 && availableBars >= 3) { // Adamantite 2h sword requires level 84
-                System.out.println("[DEBUG] Selected Adamantite 2H Sword (3 bars, level 84)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 82 && availableBars >= 3) { // Adamantite kiteshield requires level 82
-                System.out.println("[DEBUG] Selected Adamantite Kiteshield (3 bars, level 82)");
-                return 27; // Kiteshield (3 bars)
-            }
-            if (smithingLevel >= 81 && availableBars >= 3) { // Adamantite chainbody requires level 81
-                System.out.println("[DEBUG] Selected Adamantite Chainbody (3 bars, level 81)");
-                return 19; // Chainbody (3 bars)
-            }
-            if (smithingLevel >= 80 && availableBars >= 3) { // Adamantite battleaxe requires level 80
-                System.out.println("[DEBUG] Selected Adamantite Battleaxe (3 bars, level 80)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 79 && availableBars >= 3) { // Adamantite warhammer requires level 79
-                System.out.println("[DEBUG] Selected Adamantite Warhammer (3 bars, level 79)");
-                return 16; // Warhammer (3 bars)
-            }
-            if (smithingLevel >= 78 && availableBars >= 2) { // Adamantite square shield requires level 78
-                System.out.println("[DEBUG] Selected Adamantite Square Shield (2 bars, level 78)");
-                return 26; // Square shield (2 bars)
-            }
-            if (smithingLevel >= 77 && availableBars >= 2) { // Adamantite full helm requires level 77
-                System.out.println("[DEBUG] Selected Adamantite Full Helm (2 bars, level 77)");
-                return 25; // Full helm (2 bars)
-            }
-            if (smithingLevel >= 77 && availableBars >= 1) { // Adamantite knife requires level 77
-                System.out.println("[DEBUG] Selected Adamantite Knife (1 bar, level 77)");
-                return 31; // Knife (1 bar)
-            }
-            if (smithingLevel >= 76 && availableBars >= 2) { // Adamantite longsword requires level 76
-                System.out.println("[DEBUG] Selected Adamantite Longsword (2 bars, level 76)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 75 && availableBars >= 2) { // Adamantite scimitar requires level 75
-                System.out.println("[DEBUG] Selected Adamantite Scimitar (2 bars, level 75)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 74 && availableBars >= 1) { // Adamantite sword requires level 74
-                System.out.println("[DEBUG] Selected Adamantite Sword (1 bar, level 74)");
-                return 10; // Sword (1 bar)
-            }
-            if (smithingLevel >= 73 && availableBars >= 1) { // Adamantite med helm requires level 73
-                System.out.println("[DEBUG] Selected Adamantite Med Helm (1 bar, level 73)");
-                return 24; // Med helm (1 bar)
-            }
-            if (smithingLevel >= 72 && availableBars >= 1) { // Adamantite mace requires level 72
-                System.out.println("[DEBUG] Selected Adamantite Mace (1 bar, level 72)");
-                return 15; // Mace (1 bar)
-            }
-            if (smithingLevel >= 71 && availableBars >= 1) { // Adamantite axe requires level 71
-                System.out.println("[DEBUG] Selected Adamantite Axe (1 bar, level 71)");
-                return 14; // Axe (1 bar)
-            }
-            if (smithingLevel >= 70 && availableBars >= 1) { // Adamantite dagger requires level 70
-                System.out.println("[DEBUG] Selected Adamantite Dagger (1 bar, level 70)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else if (metalTypeLower.equals("runite") || metalTypeLower.equals("rune")) {
-            // Runite items (ordered by bars required - most bars first) - REAL LEVELS
-            if (smithingLevel >= 99 && availableBars >= 5) { // Runite platebody requires level 99
-                System.out.println("[DEBUG] Selected Runite Platebody (5 bars, level 99)");
-                return 22; // Platebody (5 bars)
-            }
-            if (smithingLevel >= 99 && availableBars >= 3) { // Runite platelegs requires level 99
-                System.out.println("[DEBUG] Selected Runite Platelegs (3 bars, level 99)");
-                return 20; // Platelegs (3 bars)
-            }
-            if (smithingLevel >= 99 && availableBars >= 3) { // Runite plateskirt requires level 99
-                System.out.println("[DEBUG] Selected Runite Plateskirt (3 bars, level 99)");
-                return 21; // Plateskirt (3 bars)
-            }
-            if (smithingLevel >= 99 && availableBars >= 3) { // Runite 2h sword requires level 99
-                System.out.println("[DEBUG] Selected Runite 2H Sword (3 bars, level 99)");
-                return 13; // Two-handed sword (3 bars)
-            }
-            if (smithingLevel >= 97 && availableBars >= 3) { // Runite kiteshield requires level 97
-                System.out.println("[DEBUG] Selected Runite Kiteshield (3 bars, level 97)");
-                return 27; // Kiteshield (3 bars)
-            }
-            if (smithingLevel >= 96 && availableBars >= 3) { // Runite chainbody requires level 96
-                System.out.println("[DEBUG] Selected Runite Chainbody (3 bars, level 96)");
-                return 19; // Chainbody (3 bars)
-            }
-            if (smithingLevel >= 95 && availableBars >= 3) { // Runite battleaxe requires level 95
-                System.out.println("[DEBUG] Selected Runite Battleaxe (3 bars, level 95)");
-                return 17; // Battleaxe (3 bars)
-            }
-            if (smithingLevel >= 94 && availableBars >= 3) { // Runite warhammer requires level 94
-                System.out.println("[DEBUG] Selected Runite Warhammer (3 bars, level 94)");
-                return 16; // Warhammer (3 bars)
-            }
-            if (smithingLevel >= 93 && availableBars >= 2) { // Runite square shield requires level 93
-                System.out.println("[DEBUG] Selected Runite Square Shield (2 bars, level 93)");
-                return 26; // Square shield (2 bars)
-            }
-            if (smithingLevel >= 92 && availableBars >= 2) { // Runite full helm requires level 92
-                System.out.println("[DEBUG] Selected Runite Full Helm (2 bars, level 92)");
-                return 25; // Full helm (2 bars)
-            }
-            if (smithingLevel >= 92 && availableBars >= 1) { // Runite knife requires level 92
-                System.out.println("[DEBUG] Selected Runite Knife (1 bar, level 92)");
-                return 31; // Knife (1 bar)
-            }
-            if (smithingLevel >= 91 && availableBars >= 2) { // Runite longsword requires level 91
-                System.out.println("[DEBUG] Selected Runite Longsword (2 bars, level 91)");
-                return 12; // Longsword (2 bars)
-            }
-            if (smithingLevel >= 90 && availableBars >= 2) { // Runite scimitar requires level 90
-                System.out.println("[DEBUG] Selected Runite Scimitar (2 bars, level 90)");
-                return 11; // Scimitar (2 bars)
-            }
-            if (smithingLevel >= 89 && availableBars >= 1) { // Runite sword requires level 89
-                System.out.println("[DEBUG] Selected Runite Sword (1 bar, level 89)");
-                return 10; // Sword (1 bar)
-            }
-            if (smithingLevel >= 88 && availableBars >= 1) { // Runite med helm requires level 88
-                System.out.println("[DEBUG] Selected Runite Med Helm (1 bar, level 88)");
-                return 24; // Med helm (1 bar)
-            }
-            if (smithingLevel >= 87 && availableBars >= 1) { // Runite mace requires level 87
-                System.out.println("[DEBUG] Selected Runite Mace (1 bar, level 87)");
-                return 15; // Mace (1 bar)
-            }
-            if (smithingLevel >= 86 && availableBars >= 1) { // Runite axe requires level 86
-                System.out.println("[DEBUG] Selected Runite Axe (1 bar, level 86)");
-                return 14; // Axe (1 bar)
-            }
-            if (smithingLevel >= 85 && availableBars >= 1) { // Runite dagger requires level 85
-                System.out.println("[DEBUG] Selected Runite Dagger (1 bar, level 85)");
-                return 9; // Dagger (1 bar)
-            }
-        }
-        else {
-            // Unknown metal type
-            System.out.println("[DEBUG] Unknown metal type: '" + metalTypeLower + "' - using fallback dagger selection");
-            updateStatus("Unknown metal type: " + metalTypeLower + ", falling back to basic smithing");
-        }
-
-        // Fallback to basic dagger if nothing else works and we have bars
-        if (availableBars >= 1) {
-            System.out.println("[DEBUG] Fallback to basic dagger with " + availableBars + " bars");
-            return 9; // AnvilItem.DAGGER
-        }
-        
-        System.out.println("[DEBUG] No suitable item found - no bars available");
-        return -1; // No suitable item found
-    }
 
     /**
      * Waits for smithing process to complete with progress monitoring
@@ -3479,133 +3132,6 @@ public class AIOMetalWorkerScript extends Script {
         }
         
         return newItemsCount;
-    }
-
-    /**
-     * DYNAMIC LEVEL PROGRESSION: Waits for a single smithing action to complete
-     * This allows for real-time level checking after each smithing action, enabling
-     * progressive item upgrades as the player levels up during smithing sessions
-     */
-    private void waitForSingleSmithingAction() {
-        updateStatus("DYNAMIC: Waiting for single smithing action to complete...");
-        long actionStartTime = System.currentTimeMillis();
-        int initialBarCount = Rs2Inventory.count(config.metalType().getBarName());
-        
-        // Track initial inventory for item counting
-        Map<String, Integer> initialInventory = getCurrentInventorySnapshot();
-        boolean expectingXPDrop = true;
-        boolean actionCompleted = false;
-
-        System.out.println("[DEBUG] DYNAMIC - Starting single smithing action wait with " + initialBarCount + " bars");
-
-        while (!actionCompleted && (System.currentTimeMillis() - actionStartTime < 60000)) { // 1 minute max per action
-            // Wait for XP drop to indicate smithing action completed
-            if (expectingXPDrop && Rs2Player.waitForXpDrop(Skill.SMITHING, 7500)) {
-                updateStatus("DYNAMIC: Smithing XP drop detected - single action completed!");
-                System.out.println("[DEBUG] DYNAMIC - XP drop detected, single action completed");
-                
-                // Count actual items created (not bars used)
-                Map<String, Integer> currentInventory = getCurrentInventorySnapshot();
-                int newItemsCreated = countNewItemsCreated(initialInventory, currentInventory);
-                
-                if (newItemsCreated > 0) {
-                    for (int i = 0; i < newItemsCreated; i++) {
-                        progress.incrementItemsSmithed();
-                    }
-                    updateStatus("DYNAMIC: Created " + newItemsCreated + " new items! Total: " + progress.getItemsSmithed());
-                    System.out.println("[DEBUG] DYNAMIC - Created " + newItemsCreated + " items, total: " + progress.getItemsSmithed());
-                }
-                
-                actionCompleted = true;
-                break;
-            }
-
-            // Check if smithing animation stopped (action may be complete)
-            if (!Rs2Player.isAnimating() && !Rs2Player.isMoving()) {
-                // Check if bar count changed (indicating smithing occurred)
-                int currentBarCount = Rs2Inventory.count(config.metalType().getBarName());
-                if (currentBarCount != initialBarCount) {
-                    updateStatus("DYNAMIC: Bar count changed - single action completed (bars: " + initialBarCount + " -> " + currentBarCount + ")");
-                    System.out.println("[DEBUG] DYNAMIC - Bar count changed from " + initialBarCount + " to " + currentBarCount);
-                    actionCompleted = true;
-                    break;
-                }
-                
-                // If no bars left, action is definitely complete
-                if (currentBarCount == 0) {
-                    updateStatus("DYNAMIC: No bars remaining - action completed");
-                    System.out.println("[DEBUG] DYNAMIC - No bars remaining, action completed");
-                    actionCompleted = true;
-                    break;
-                }
-            }
-
-            // Brief sleep between checks
-            sleep(200, 400);
-        }
-
-        if (!actionCompleted) {
-            updateStatus("DYNAMIC: Single action timeout - proceeding anyway");
-            System.out.println("[DEBUG] DYNAMIC - Single action timeout after 60 seconds");
-        }
-
-        System.out.println("[DEBUG] DYNAMIC - Single smithing action wait completed");
-    }
-
-    private void waitForSmithing() {
-        updateStatus("Smithing in progress...");
-        long smithingStartTime = System.currentTimeMillis();
-        int initialBarCount = Rs2Inventory.count(config.metalType().getBarName());
-        
-        // Track actual items created for proper counting
-        Map<String, Integer> initialInventory = getCurrentInventorySnapshot();
-        boolean expectingXPDrop = true;
-
-        while (Rs2Player.isAnimating() || Rs2Player.isMoving() || expectingXPDrop) {
-            // EXPERT FIX: Use XP drop monitoring like working plugin
-            if (expectingXPDrop && Rs2Player.waitForXpDrop(Skill.SMITHING, 7500)) {
-                updateStatus("Smithing XP drop detected - checking for new items...");
-                
-                // Count actual items created (not bars used)
-                Map<String, Integer> currentInventory = getCurrentInventorySnapshot();
-                int newItemsCreated = countNewItemsCreated(initialInventory, currentInventory);
-                
-                if (newItemsCreated > 0) {
-                    for (int i = 0; i < newItemsCreated; i++) {
-                        progress.incrementItemsSmithed();
-                    }
-                    updateStatus("Created " + newItemsCreated + " new items! Total items smithed: " + progress.getItemsSmithed());
-                    
-                    // Update initial inventory for next comparison
-                    initialInventory = currentInventory;
-                }
-                
-                // Reset expectation for next XP drop
-                expectingXPDrop = Rs2Player.isAnimating();
-            }
-
-            // Monitor bar consumption for status updates
-            int currentBarCount = Rs2Inventory.count(config.metalType().getBarName());
-            if (currentBarCount != initialBarCount) {
-                updateStatus("Bars remaining: " + currentBarCount + ", Items smithed: " + progress.getItemsSmithed());
-                initialBarCount = currentBarCount;
-            }
-
-            // Safety timeout (10 minutes max)
-            if (System.currentTimeMillis() - smithingStartTime > 600000) {
-                handleError("Smithing timeout exceeded");
-                break;
-            }
-
-            // Check if we're still smithing
-            if (!Rs2Player.isAnimating() && !hasBarsToSmith()) {
-                updateStatus("Smithing completed - no more bars");
-                break;
-            }
-
-            // EXPERT FIX: Use working plugin sleep timing
-            sleep(256, 789);
-        }
     }
 
     /**
