@@ -272,4 +272,15 @@ public interface AIOMetalWorkerConfig extends Config {
     default boolean withdrawPickaxe() {
         return true;
     }
+
+    @ConfigItem(
+            keyName = "useForgingRing",
+            name = "Use Forging Ring",
+            description = "Automatically equip ring of forging during smelting for 100% success rate (Iron only). Ring has 140 uses and will be replaced when depleted.",
+            position = 22,
+            section = advancedSection
+    )
+    default boolean useForgingRing() {
+        return false;
+    }
 }

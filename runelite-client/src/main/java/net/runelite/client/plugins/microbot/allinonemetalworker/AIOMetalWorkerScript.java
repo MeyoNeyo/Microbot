@@ -63,6 +63,10 @@ public class AIOMetalWorkerScript extends Script {
     private static final WorldPoint LUMBRIDGE_BANK = new WorldPoint(3208, 3220, 2);
     private static final WorldPoint AL_KHARID_BANK = new WorldPoint(3269, 3167, 0);
 
+    // Forging ring constants
+    private static final String RING_OF_FORGING = "Ring of forging";
+    private static final int RING_OF_FORGING_USES = 140;
+
     // State tracking
     private int failedActionCount = 0;
     
@@ -1797,6 +1801,13 @@ public class AIOMetalWorkerScript extends Script {
     private void withdrawOresForSmelting() {
         updateStatus("Withdrawing ores for smelting...");
 
+        // FORGING RING: Ensure ring is equipped before withdrawing ores for iron smelting
+        if (shouldUseForgingRing()) {
+            if (!ensureForgingRingEquipped()) {
+                updateStatus("Warning: Failed to equip forging ring, continuing without it");
+            }
+        }
+
         String[] oreNames = config.metalType().getOreNames();
         int availableSlots = 28 - Rs2Inventory.count(); // Account for existing items/tools
         int targetQuantity = config.targetQuantity();
@@ -2564,6 +2575,13 @@ public class AIOMetalWorkerScript extends Script {
             progress.addOresUsedForSmelting(oresConsumedThisSession);
             updateStatus("Ores consumed this session: " + oresConsumedThisSession + 
                         " (Total used: " + progress.getOresUsedForSmelting() + "/" + config.targetQuantity() + ")");
+        }
+
+        // FORGING RING: Check for ring depletion after smelting session
+        if (shouldUseForgingRing() && oresConsumedThisSession > 0) {
+            if (!hasForgingRingEquipped()) {
+                updateStatus("Forging ring depleted during smelting! Will equip new ring next banking trip.");
+            }
         }
 
         updateStatus("Smelting session complete! Remaining ores: " + finalOreCount + 
@@ -3770,5 +3788,98 @@ public class AIOMetalWorkerScript extends Script {
         return destination.distanceTo(LUMBRIDGE_BANK) <= 2 ||
                destination.distanceTo(AL_KHARID_BANK) <= 2 ||
                destination.distanceTo(new WorldPoint(3095, 3245, 0)) <= 2; // Draynor bank
+    }
+
+    /**
+     * FORGING RING: Checks if the forging ring is currently equipped
+     */
+    private boolean hasForgingRingEquipped() {
+        return Rs2Equipment.isWearing(RING_OF_FORGING);
+    }
+
+    /**
+     * FORGING RING: Checks if we have a forging ring available in inventory or bank
+     */
+    private boolean hasForgingRingAvailable() {
+        return Rs2Inventory.hasItem(RING_OF_FORGING) || 
+               (Rs2Bank.isOpen() && Rs2Bank.hasItem(RING_OF_FORGING));
+    }
+
+    /**
+     * FORGING RING: Checks if forging ring should be used for current metal type
+     * Currently only beneficial for iron smelting
+     */
+    private boolean shouldUseForgingRing() {
+        return config.useForgingRing() && 
+               config.smeltBars() && 
+               config.metalType().getDisplayName().toLowerCase().contains("iron");
+    }
+
+    /**
+     * FORGING RING: Equips a forging ring from inventory
+     */
+    private boolean equipForgingRing() {
+        if (Rs2Inventory.hasItem(RING_OF_FORGING)) {
+            updateStatus("Equipping ring of forging for 100% iron smelting success");
+            if (Rs2Inventory.interact(RING_OF_FORGING, "Wear")) {
+                sleep(600, 1000);
+                return Rs2Equipment.isWearing(RING_OF_FORGING);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * FORGING RING: Withdraws and equips a forging ring from bank
+     */
+    private boolean withdrawAndEquipForgingRing() {
+        if (!Rs2Bank.isOpen()) {
+            return false;
+        }
+
+        if (Rs2Bank.hasItem(RING_OF_FORGING)) {
+            updateStatus("Withdrawing ring of forging from bank");
+            if (Rs2Bank.withdrawOne(RING_OF_FORGING)) {
+                sleep(600, 1000);
+                return equipForgingRing();
+            }
+        } else {
+            updateStatus("Warning: No ring of forging available in bank");
+            if (config.enableDebugLogs()) {
+                Microbot.log("FORGING RING: No ring of forging found in bank");
+            }
+        }
+        return false;
+    }
+
+    /**
+     * FORGING RING: Ensures forging ring is equipped before smelting (if enabled)
+     * Returns true if ring is equipped or not needed, false if failed to equip
+     */
+    private boolean ensureForgingRingEquipped() {
+        if (!shouldUseForgingRing()) {
+            return true; // Not needed
+        }
+
+        // Check if already equipped
+        if (hasForgingRingEquipped()) {
+            if (config.enableDebugLogs()) {
+                Microbot.log("FORGING RING: Already equipped");
+            }
+            return true;
+        }
+
+        // Try to equip from inventory first
+        if (Rs2Inventory.hasItem(RING_OF_FORGING)) {
+            return equipForgingRing();
+        }
+
+        // Need to get one from bank
+        if (Rs2Bank.isOpen() && Rs2Bank.hasItem(RING_OF_FORGING)) {
+            return withdrawAndEquipForgingRing();
+        }
+
+        updateStatus("Warning: Cannot equip forging ring - none available");
+        return false;
     }
 }
