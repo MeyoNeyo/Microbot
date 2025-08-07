@@ -197,7 +197,11 @@ public class WineOfZamorakScript extends Script {
             return; // Don't proceed with wine checking immediately after hop
         }
         
-        if (isWineAvailable()) {
+        // Use sleepUntil to wait for wine to appear (wait up to 2 seconds)
+        Microbot.log("Checking for wine availability...");
+        boolean wineFound = sleepUntil(() -> isWineAvailable(), 2000);
+        
+        if (wineFound) {
             Microbot.log("Wine found! Casting telekinetic grab.");
             state = WineOfZamorakState.CASTING_TELEKINETIC_GRAB;
         } else if (config.enableWorldHopping()) {
@@ -210,10 +214,11 @@ public class WineOfZamorakScript extends Script {
                 return;
             }
             
-            Microbot.log("No wine found, initiating world hop.");
+            Microbot.log("No wine found after waiting 10 seconds, initiating world hop.");
             lastWorldHopAttempt = currentTime;
             state = WineOfZamorakState.WORLD_HOPPING;
         } else {
+            Microbot.log("World hopping disabled, waiting before checking again...");
             sleep(2000, 3000);
         }
     }
