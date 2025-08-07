@@ -50,7 +50,7 @@ public class FoodScript extends Script {
 
                 if (foods == null || foods.isEmpty()) {
                     if (!equipFullGuthans()) {
-                        Microbot.showMessage("No more food left & no guthans available. Please teleport");
+                        Microbot.log("No more food left & no guthans available. Please teleport");
                         sleep(5000);
                     }
                     return;
