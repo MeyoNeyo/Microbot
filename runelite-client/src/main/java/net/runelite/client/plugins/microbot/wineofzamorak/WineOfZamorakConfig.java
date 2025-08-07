@@ -43,37 +43,4 @@ public interface WineOfZamorakConfig extends Config {
     default boolean enableWorldHopping() {
         return true;
     }
-
-    @ConfigItem(
-            keyName = "worldHopDelay",
-            name = "World Hop Delay (seconds)",
-            description = "Delay between world hops in seconds",
-            position = 22,
-            section = worldHoppingSection
-    )
-    default int worldHopDelay() {
-        return 5;
-    }
-
-    @ConfigItem(
-            keyName = "maxWorldsToTry",
-            name = "Max Worlds to Try",
-            description = "Maximum number of worlds to try before stopping",
-            position = 23,
-            section = worldHoppingSection
-    )
-    default int maxWorldsToTry() {
-        return 20;
-    }
-
-    @ConfigItem(
-            keyName = "avoidPvpWorlds",
-            name = "Avoid PvP Worlds",
-            description = "Skip PvP and high-risk worlds when hopping",
-            position = 24,
-            section = worldHoppingSection
-    )
-    default boolean avoidPvpWorlds() {
-        return true;
-    }
 }

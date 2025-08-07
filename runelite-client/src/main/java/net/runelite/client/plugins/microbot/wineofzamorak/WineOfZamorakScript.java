@@ -1,6 +1,5 @@
 package net.runelite.client.plugins.microbot.wineofzamorak;
 
-import net.runelite.api.*;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
@@ -16,7 +15,6 @@ import net.runelite.client.plugins.microbot.wineofzamorak.enums.WineOfZamorakSta
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
 
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 public class WineOfZamorakScript extends Script {
 
@@ -26,18 +24,17 @@ public class WineOfZamorakScript extends Script {
     private WineOfZamorakConfig config;
     private int winesCollected = 0;
     private int worldsHopped = 0;
-    private long lastWorldHop = 0;
     private Set<Integer> recentlyVisitedWorlds = new HashSet<>();
     private int currentWorldIndex = 0;
     private volatile boolean isRunning = false;
+    private long lastWorldHopAttempt = 0;
+    private static final long WORLD_HOP_COOLDOWN = 5000; // 5 second cooldown between hop attempts
     
     // Constants
     private static final int WINE_OF_ZAMORAK_ID = 245;
     private static final int LAW_RUNE_ID = 563;
     private static final int AIR_RUNE_ID = 556;
     private static final int AIR_STAFF_ID = 1397;
-    private static final int ZAMORAK_ROBE_TOP_ID = 1033;
-    private static final int ZAMORAK_ROBE_BOTTOM_ID = 1035;
     
     // Locations
     private static final WorldPoint CHAOS_TEMPLE_ENTRANCE = new WorldPoint(2941,3517,0);
@@ -121,59 +118,6 @@ public class WineOfZamorakScript extends Script {
         return true;
     }
     
-    private void executeState() {
-        switch (state) {
-            case IDLE:
-                state = WineOfZamorakState.CHECKING_PRECONDITIONS;
-                break;
-                
-            case CHECKING_PRECONDITIONS:
-                if (checkPreconditions()) {
-                    if (Rs2Inventory.isFull()) {
-                        state = WineOfZamorakState.BANKING;
-                    } else if (!isAtWineTable()) {
-                        state = WineOfZamorakState.TRAVELING_TO_WINE_SPOT;
-                    } else {
-                        state = WineOfZamorakState.WAITING_FOR_WINE;
-                    }
-                } else {
-                    Microbot.status = "Preconditions failed - stopping";
-                    shutdown();
-                }
-                break;
-                
-            case TRAVELING_TO_WINE_SPOT:
-                travelToWineSpot();
-                break;
-                
-            case WAITING_FOR_WINE:
-                if (isWineAvailable()) {
-                    state = WineOfZamorakState.CASTING_TELEKINETIC_GRAB;
-                } else if (config.enableWorldHopping()) {
-                    state = WineOfZamorakState.WORLD_HOPPING;
-                } else {
-                    sleep(2000, 3000);
-                }
-                break;
-                
-            case CASTING_TELEKINETIC_GRAB:
-                castTelekineticGrab();
-                break;
-                
-            case WORLD_HOPPING:
-                hopWorld();
-                break;
-                
-            case BANKING:
-                depositWines();
-                break;
-                
-            case STOPPING:
-                shutdown();
-                break;
-        }
-    }
-    
     private boolean checkPreconditions() {
         Microbot.log("Checking preconditions...");
         if (Microbot.getClient().getLocalPlayer() == null) {
@@ -209,19 +153,11 @@ public class WineOfZamorakScript extends Script {
         return true;
     }
     
-    private boolean isWearingZamorakRobes() {
-        return Rs2Equipment.isWearing(ZAMORAK_ROBE_TOP_ID) && Rs2Equipment.isWearing(ZAMORAK_ROBE_BOTTOM_ID);
-    }
-    
     private boolean hasRequiredRunes() {
         boolean hasLawRunes = Rs2Inventory.hasItem(LAW_RUNE_ID);
         boolean hasAirRunes = Rs2Inventory.hasItem(AIR_RUNE_ID) || Rs2Equipment.isWearing(AIR_STAFF_ID);
         
         return hasLawRunes && hasAirRunes;
-    }
-    
-    private boolean isAtWineTable() {
-        return Rs2Player.getWorldLocation().distanceTo(WINE_TABLE_2ND_FLOOR) <= 3;
     }
     
     private boolean isWineAvailable() {
@@ -253,9 +189,29 @@ public class WineOfZamorakScript extends Script {
     
     private void waitForWine() {
         Microbot.log("Waiting for wine...");
+        
+        // First, ensure we're not currently in the middle of a world hop
+        if (Microbot.isHopping()) {
+            Microbot.log("Currently hopping worlds, waiting for hop to complete...");
+            sleepUntil(() -> !Microbot.isHopping() && Microbot.getClient().getGameState() == net.runelite.api.GameState.LOGGED_IN, 15000);
+            return; // Don't proceed with wine checking immediately after hop
+        }
+        
         if (isWineAvailable()) {
+            Microbot.log("Wine found! Casting telekinetic grab.");
             state = WineOfZamorakState.CASTING_TELEKINETIC_GRAB;
         } else if (config.enableWorldHopping()) {
+            // Check cooldown before attempting world hop
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastWorldHopAttempt < WORLD_HOP_COOLDOWN) {
+                long remainingCooldown = WORLD_HOP_COOLDOWN - (currentTime - lastWorldHopAttempt);
+                Microbot.log("World hop on cooldown for " + remainingCooldown + "ms, waiting...");
+                sleep((int)Math.min(remainingCooldown, 2000)); // Sleep for remaining cooldown or 2 seconds, whichever is shorter
+                return;
+            }
+            
+            Microbot.log("No wine found, initiating world hop.");
+            lastWorldHopAttempt = currentTime;
             state = WineOfZamorakState.WORLD_HOPPING;
         } else {
             sleep(2000, 3000);
@@ -300,7 +256,10 @@ public class WineOfZamorakScript extends Script {
     private void hopWorld() {
         Microbot.log("Hopping world...");
         
-        if (!canWorldHop()) {
+        // Don't attempt to hop if already hopping
+        if (Microbot.isHopping()) {
+            Microbot.log("Already hopping worlds, waiting for current hop to complete...");
+            sleepUntil(() -> !Microbot.isHopping() && Microbot.getClient().getGameState() == net.runelite.api.GameState.LOGGED_IN, 15000);
             state = WineOfZamorakState.WAITING_FOR_WINE;
             return;
         }
@@ -311,43 +270,38 @@ public class WineOfZamorakScript extends Script {
             int currentWorld = Microbot.getClient().getWorld();
             net.runelite.api.World targetWorld = getNextValidApiWorld();
             if (targetWorld != null) {
+                Microbot.log("Attempting to hop to world " + targetWorld.getId());
                 boolean hopped = Microbot.hopToWorld(targetWorld.getId());
                 if (hopped) {
-                    // Wait for world to change
-                    boolean worldChanged = sleepUntil(() -> Microbot.getClient().getWorld() != currentWorld, 10000);
-                    // Wait for player to be fully loaded in new world (LOGGED_IN and valid location)
-                    boolean loaded = false;
-                    if (worldChanged) {
-                        loaded = sleepUntil(() ->
-                            Microbot.getClient().getGameState() == net.runelite.api.GameState.LOGGED_IN &&
-                            Rs2Player.getWorldLocation() != null &&
-                            Rs2Player.getWorldLocation().getX() > 0,
-                            10000);
+                    // Use the proper sleepUntil pattern from other plugins
+                    sleepUntil(() -> !Microbot.isHopping() && Microbot.getClient().getGameState() == net.runelite.api.GameState.LOGGED_IN, 15000);
+                    
+                    // Give additional time for world to fully load
+                    sleep(2000, 3000);
+                    
+                    recentlyVisitedWorlds.add(currentWorld);
+                    worldsHopped++;
+                    
+                    if (recentlyVisitedWorlds.size() > 10) {
+                        recentlyVisitedWorlds.clear();
                     }
-                    if (worldChanged && loaded) {
-                        recentlyVisitedWorlds.add(currentWorld);
-                        lastWorldHop = System.currentTimeMillis();
-                        worldsHopped++;
-                        if (recentlyVisitedWorlds.size() > 10) {
-                            recentlyVisitedWorlds.clear();
-                        }
-                        if (Rs2Inventory.isFull()) {
-                            Microbot.log("Inventory full after world hop, going to bank.");
-                            state = WineOfZamorakState.BANKING;
-                        } else {
-                            Microbot.log("Inventory not full after world hop, returning to WAITING_FOR_WINE.");
-                            state = WineOfZamorakState.WAITING_FOR_WINE;
-                        }
+                    if (Rs2Inventory.isFull()) {
+                        Microbot.log("Inventory full after world hop, going to bank.");
+                        state = WineOfZamorakState.BANKING;
                     } else {
-                        Microbot.log("World hop failed or player not loaded in new world");
+                        Microbot.log("World hop successful, checking for wine.");
                         state = WineOfZamorakState.WAITING_FOR_WINE;
                     }
                 } else {
-                    Microbot.log("World hop failed");
+                    Microbot.log("World hop failed - hop function returned false");
+                    // Don't immediately retry, let the cooldown handle it
                     state = WineOfZamorakState.WAITING_FOR_WINE;
                 }
             } else {
-                Microbot.status = "No valid worlds found";
+                Microbot.log("No valid worlds found for hopping");
+                Microbot.status = "No valid worlds found - waiting before retry";
+                // Wait longer when no valid worlds are found to avoid spam
+                sleep(5000, 7000);
                 state = WineOfZamorakState.WAITING_FOR_WINE;
             }
         } catch (Exception e) {
@@ -356,20 +310,23 @@ public class WineOfZamorakScript extends Script {
         }
     }
     
-    private boolean canWorldHop() {
-        // Check if enough time has passed since last hop
-        long timeSinceLastHop = System.currentTimeMillis() - lastWorldHop;
-        return timeSinceLastHop >= (config.worldHopDelay() * 1000L);
-    }
-    
     private net.runelite.api.World getNextValidApiWorld() {
         List<net.runelite.api.World> availableWorlds = new ArrayList<>();
         try {
             // Use WorldService to get the world list (more reliable than getClient().getWorldList())
-            List<net.runelite.http.api.worlds.World> worldList = Microbot.getWorldService().getWorlds().getWorlds();
+            net.runelite.http.api.worlds.WorldResult worldResult = Microbot.getWorldService().getWorlds();
+            if (worldResult == null) {
+                Microbot.log("WorldService.getWorlds() returned null");
+                return null;
+            }
+            
+            List<net.runelite.http.api.worlds.World> worldList = worldResult.getWorlds();
             if (worldList == null || worldList.isEmpty()) {
-                Microbot.log("WorldService.getWorlds() returned null or empty");
+                Microbot.log("WorldService.getWorlds() returned null or empty world list");
+                return null;
             } else {
+                Microbot.log("Found " + worldList.size() + " total worlds from API");
+                int validWorldCount = 0;
                 for (net.runelite.http.api.worlds.World apiWorld : worldList) {
                     // Convert to net.runelite.api.World for compatibility
                     net.runelite.api.World world = Microbot.getClient().createWorld();
@@ -382,9 +339,11 @@ public class WineOfZamorakScript extends Script {
                         world.setLocation(apiWorld.getLocation());
                         if (isValidApiWorld(world)) {
                             availableWorlds.add(world);
+                            validWorldCount++;
                         }
                     }
                 }
+                Microbot.log("Found " + validWorldCount + " valid worlds after filtering");
             }
         } catch (Exception e) {
             Microbot.log("Error getting world list: " + e.getMessage());
@@ -399,12 +358,15 @@ public class WineOfZamorakScript extends Script {
             net.runelite.api.World world = availableWorlds.get(currentWorldIndex);
             if (!recentlyVisitedWorlds.contains(world.getId()) && 
                 world.getId() != Microbot.getClient().getWorld()) {
+                Microbot.log("Selected world " + world.getId() + " for hopping");
                 return world;
             }
         }
         // If all worlds have been recently visited, return the next one anyway
         currentWorldIndex = (currentWorldIndex + 1) % availableWorlds.size();
-        return availableWorlds.get(currentWorldIndex);
+        net.runelite.api.World selectedWorld = availableWorlds.get(currentWorldIndex);
+        Microbot.log("All worlds recently visited, selecting world " + selectedWorld.getId() + " anyway");
+        return selectedWorld;
     }
     
     private boolean isValidApiWorld(net.runelite.api.World world) {
@@ -421,20 +383,26 @@ public class WineOfZamorakScript extends Script {
         }
 
         EnumSet<net.runelite.api.WorldType> types = world.getTypes();
-
-        // Skip members worlds if player is F2P
-        if (!Microbot.getClient().getWorldType().contains(net.runelite.api.WorldType.MEMBERS)
-            && types.contains(net.runelite.api.WorldType.MEMBERS)) {
-            return false;
-        }
-
-        // Skip PvP and high-risk worlds if configured
-        if (config.avoidPvpWorlds()) {
-            if (types.contains(net.runelite.api.WorldType.PVP) ||
-                types.contains(net.runelite.api.WorldType.HIGH_RISK) ||
-                types.contains(net.runelite.api.WorldType.DEADMAN)) {
+        
+        // Check player membership status and filter worlds accordingly
+        boolean playerIsMember = Rs2Player.isMember();
+        
+        if (playerIsMember) {
+            // If player is a member, they can access both F2P and P2P worlds
+            // No additional filtering needed based on membership
+        } else {
+            // If player is F2P, skip members-only worlds
+            if (types.contains(net.runelite.api.WorldType.MEMBERS)) {
+                Microbot.log("Skipping members world " + world.getId() + " (player is F2P)");
                 return false;
             }
+        }
+
+        // Always skip PvP and high-risk worlds
+        if (types.contains(net.runelite.api.WorldType.PVP) ||
+            types.contains(net.runelite.api.WorldType.HIGH_RISK) ||
+            types.contains(net.runelite.api.WorldType.DEADMAN)) {
+            return false;
         }
 
         // Skip skill total requirement worlds
@@ -442,8 +410,14 @@ public class WineOfZamorakScript extends Script {
             return false;
         }
 
-        // Skip Deadman worlds (already covered above), and any other restricted types that exist in your API
-        // Add more filters here if your RuneLite API defines more restricted world types
+        // Skip other restricted world types
+        if (types.contains(net.runelite.api.WorldType.NOSAVE_MODE) ||
+            types.contains(net.runelite.api.WorldType.BETA_WORLD) ||
+            types.contains(net.runelite.api.WorldType.QUEST_SPEEDRUNNING) ||
+            types.contains(net.runelite.api.WorldType.LAST_MAN_STANDING) ||
+            types.contains(net.runelite.api.WorldType.PVP_ARENA)) {
+            return false;
+        }
 
         return true;
     }
@@ -479,10 +453,6 @@ public class WineOfZamorakScript extends Script {
             // Go back to wine spot
             state = WineOfZamorakState.TRAVELING_TO_WINE_SPOT;
         }
-    }
-
-    private boolean shouldStop() {
-        return worldsHopped >= config.maxWorldsToTry() && config.enableWorldHopping();
     }
     
     @Override
