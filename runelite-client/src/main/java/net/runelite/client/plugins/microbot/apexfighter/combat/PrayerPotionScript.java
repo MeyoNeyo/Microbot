@@ -4,7 +4,6 @@ import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.apexfighter.ApexFighterConfig;
-import net.runelite.client.plugins.microbot.nmz.NmzConfig;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
@@ -39,11 +38,11 @@ public class PrayerPotionScript extends Script {
         return true;
     }
 
-    public boolean run(NmzConfig config) {
+    public boolean run(boolean usePrayerPotions) {
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
                 if (!super.run()) return;
-                if (!config.togglePrayerPotions()) return;
+                if (!usePrayerPotions) return;
                 if ((Microbot.getClient().getBoostedSkillLevel(Skill.PRAYER) * 100) / Microbot.getClient().getRealSkillLevel(Skill.PRAYER) > Rs2Random.between(25, 30))
                     return;
                 List<Rs2ItemModel> potions = Microbot.getClientThread().runOnClientThreadOptional(Rs2Inventory::getPotions).orElse(null);
