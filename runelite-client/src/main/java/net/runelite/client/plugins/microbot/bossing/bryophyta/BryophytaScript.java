@@ -42,7 +42,7 @@ public class BryophytaScript extends Script {
     // Important locations
     public static final WorldPoint VARROCK_EAST_BANK = new WorldPoint(3253, 3420, 0);
     public static final WorldPoint VARROCK_CHURCH = new WorldPoint(3255, 3482, 0);
-    public static final WorldPoint BRYOPHYTA_ENTRANCE = new WorldPoint(3174, 4900, 0);
+    public static final WorldPoint BRYOPHYTA_ENTRANCE = new WorldPoint(3174, 9900, 0);
     
     // NPC and Object names
     public static final String BRYOPHYTA_NAME = "Bryophyta";
@@ -91,6 +91,19 @@ public class BryophytaScript extends Script {
     private static boolean initialized = false; // Track if plugin has been initialized
     
     private BryophytaConfig config;
+
+    /**
+     * Helper method to properly change states and update timing variables
+     * This prevents timeout issues when manually changing states
+     */
+    private static void changeState(BryophytaState newState) {
+        if (currentState != newState) {
+            Microbot.log("State change: " + currentState + " -> " + newState);
+            currentState = newState;
+            lastState = newState;
+            lastStateChange = Instant.now();
+        }
+    }
 
     public boolean run(BryophytaConfig config) {
         this.config = config;
@@ -141,8 +154,7 @@ public class BryophytaScript extends Script {
                     if (stateTime.getSeconds() > STATE_TIMEOUT_SECONDS) {
                         Microbot.log("State timeout detected! State '" + currentState + "' has been running for " + stateTime.getSeconds() + " seconds");
                         Microbot.log("Resetting to BANKING state to resolve the issue");
-                        currentState = BryophytaState.BANKING;
-                        lastStateChange = Instant.now();
+                        changeState(BryophytaState.BANKING);
                     }
                 }
 
@@ -350,6 +362,23 @@ public class BryophytaScript extends Script {
 
         // Check if we have required supplies first (this should take priority over location)
         if (hasRequiredSupplies()) {
+            // If we're already at the entrance, don't override ENTERING_LAIR state
+            if (Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE) <= 5) {
+                // Player is at entrance with supplies, they should be entering or already in lair
+                if (currentState != BryophytaState.ENTERING_LAIR && currentState != BryophytaState.FIGHTING_BOSS && 
+                    currentState != BryophytaState.FIGHTING_GROWTHLINGS && currentState != BryophytaState.LOOTING_CHEST && 
+                    currentState != BryophytaState.LOOTING_DROPS && currentState != BryophytaState.LEAVING_LAIR) {
+                    Microbot.log("Player at entrance with supplies, setting state to ENTERING_LAIR (was: " + currentState + ")");
+                    currentState = BryophytaState.ENTERING_LAIR;
+                } else {
+                    Microbot.log("Player at entrance, keeping current state: " + currentState);
+                }
+                return;
+            }
+            // Player has supplies but not at entrance yet
+            if (currentState != BryophytaState.WALKING_TO_ENTRANCE) {
+                Microbot.log("Player has supplies but not at entrance, setting state to WALKING_TO_ENTRANCE");
+            }
             currentState = BryophytaState.WALKING_TO_ENTRANCE;
             return;
         }
@@ -499,9 +528,7 @@ public class BryophytaScript extends Script {
         if (hasRequiredSupplies()) {
             Microbot.log("Banking successful, has all required supplies. Forcing state to WALKING_TO_ENTRANCE");
             // Force the state change to avoid the updateState loop issue
-            currentState = BryophytaState.WALKING_TO_ENTRANCE;
-            lastState = BryophytaState.BANKING; // Ensure state change is tracked
-            lastStateChange = Instant.now();
+            changeState(BryophytaState.WALKING_TO_ENTRANCE);
         } else {
             Microbot.log("Still missing supplies after banking:");
             Microbot.log("- Has keys: " + hasKeys());
@@ -537,14 +564,14 @@ public class BryophytaScript extends Script {
         Microbot.log("Withdrawing runes for " + teleportSets + " Varrock teleport(s)...");
         
         // Varrock teleport needs: 1 law rune, 3 air runes, 1 fire rune
-        if (Rs2Bank.hasItem("Law rune")) {
-            Microbot.log("Withdrawing " + teleportSets + " law rune(s)...");
-            Rs2Bank.withdrawX("Law rune", teleportSets);
-            sleep(600, 1000);
-        }
         if (Rs2Bank.hasItem("Air rune")) {
             Microbot.log("Withdrawing " + (teleportSets * 3) + " air rune(s)...");
             Rs2Bank.withdrawX("Air rune", teleportSets * 3);
+            sleep(600, 1000);
+        }
+        if (Rs2Bank.hasItem("Law rune")) {
+            Microbot.log("Withdrawing " + teleportSets + " law rune(s)...");
+            Rs2Bank.withdrawX("Law rune", teleportSets);
             sleep(600, 1000);
         }
         if (Rs2Bank.hasItem("Fire rune")) {
@@ -673,8 +700,26 @@ public class BryophytaScript extends Script {
     private void walkToEntrance() {
         currentTarget = "Walking to Entrance";
         
+        WorldPoint currentLocation = Rs2Player.getWorldLocation();
+        double distanceToEntrance = currentLocation.distanceTo(BRYOPHYTA_ENTRANCE);
+        
+        // Check if we're already at the entrance
+        if (distanceToEntrance <= 5) {
+            Microbot.log("Already at entrance (distance: " + String.format("%.1f", distanceToEntrance) + "), transitioning to enter lair");
+            changeState(BryophytaState.ENTERING_LAIR);
+            return;
+        }
+        
+        Microbot.log("Walking to Bryophyta entrance... Current distance: " + String.format("%.1f", distanceToEntrance));
         Rs2Walker.walkTo(BRYOPHYTA_ENTRANCE);
-        sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE) <= 5, 10000);
+        
+        // Wait for player to reach the entrance
+        if (sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE) <= 5, 15000)) {
+            Microbot.log("Reached entrance (distance: " + String.format("%.1f", Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE)) + "), transitioning to enter lair");
+            changeState(BryophytaState.ENTERING_LAIR);
+        } else {
+            Microbot.log("Failed to reach entrance within timeout, current distance: " + String.format("%.1f", Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE)));
+        }
     }
 
     private void enterLair() {
@@ -683,14 +728,79 @@ public class BryophytaScript extends Script {
         try {
             Microbot.log("Attempting to enter Bryophyta lair...");
             
-            // Find the gate by ID
-            GameObject gate = Rs2GameObject.getGameObject(GATE_ID);
+            // Try multiple methods to find the gate
+            TileObject gate = null;
+            
+            // Method 1: Try as GameObject
+            gate = Rs2GameObject.getGameObject(GATE_ID);
+            
+            // Method 2: Try as WallObject if GameObject fails
             if (gate == null) {
+                gate = Rs2GameObject.getWallObject(GATE_ID);
+                if (gate != null) {
+                    Microbot.log("Found gate as WallObject");
+                }
+            }
+            
+            // Method 3: Try by name if ID search fails
+            if (gate == null) {
+                gate = Rs2GameObject.getGameObject("Gate");
+                if (gate != null) {
+                    Microbot.log("Found gate by name");
+                }
+            }
+            
+            // Method 4: Try searching with distance parameter
+            if (gate == null) {
+                gate = Rs2GameObject.getGameObject(GATE_ID, BRYOPHYTA_ENTRANCE, 10);
+                if (gate != null) {
+                    Microbot.log("Found gate with distance search");
+                }
+            }
+            
+            // Method 5: Try WallObject with distance
+            if (gate == null) {
+                gate = Rs2GameObject.getWallObject(GATE_ID, BRYOPHYTA_ENTRANCE, 10);
+                if (gate != null) {
+                    Microbot.log("Found gate as WallObject with distance");
+                }
+            }
+            
+            if (gate == null) {
+                Microbot.log("Gate not found with any method - debugging object detection");
+                
+                // Debug: List all nearby objects
+                List<GameObject> nearbyObjects = Rs2GameObject.getGameObjects(10);
+                Microbot.log("Found " + nearbyObjects.size() + " GameObjects nearby");
+                for (GameObject obj : nearbyObjects) {
+                    try {
+                        ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                        String name = comp != null ? comp.getName() : "null";
+                        Microbot.log("GameObject: ID=" + obj.getId() + ", Name=" + name);
+                    } catch (Exception e) {
+                        Microbot.log("GameObject: ID=" + obj.getId() + ", Name=error");
+                    }
+                }
+                
+                List<WallObject> nearbyWalls = Rs2GameObject.getWallObjects(10);
+                Microbot.log("Found " + nearbyWalls.size() + " WallObjects nearby");
+                for (WallObject wall : nearbyWalls) {
+                    try {
+                        ObjectComposition comp = Rs2GameObject.convertToObjectComposition(wall);
+                        String name = comp != null ? comp.getName() : "null";
+                        Microbot.log("WallObject: ID=" + wall.getId() + ", Name=" + name);
+                    } catch (Exception e) {
+                        Microbot.log("WallObject: ID=" + wall.getId() + ", Name=error");
+                    }
+                }
+                
                 Microbot.log("Gate not found - moving closer to entrance");
                 Rs2Walker.walkTo(BRYOPHYTA_ENTRANCE);
                 Rs2Player.waitForWalking();
                 return;
             }
+            
+            Microbot.log("Found gate, attempting to interact");
             
             // Interact with the gate
             if (Rs2GameObject.interact(gate, "Open")) {
@@ -713,7 +823,7 @@ public class BryophytaScript extends Script {
                             
                             if (isInBryophytaLair()) {
                                 Microbot.log("Successfully entered Bryophyta lair!");
-                                currentState = BryophytaState.FIGHTING_BOSS;
+                                changeState(BryophytaState.FIGHTING_BOSS);
                             }
                         }
                     }
