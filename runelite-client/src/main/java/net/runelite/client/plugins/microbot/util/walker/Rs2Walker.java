@@ -1072,8 +1072,8 @@ public class Rs2Walker {
                 if (object == null) continue;
 
                 ObjectComposition comp = Rs2GameObject.convertToObjectComposition(object);
-				// We include the name "null" here to ignore imposter objects
-                if (comp == null || comp.getName().equals("null")) continue;
+				// Ignore imposter objects
+                if (comp == null || comp.getImpostorIds() != null || comp.getName().equals("null")) continue;
 
                 String action = Arrays.stream(comp.getActions())
 					.filter(Objects::nonNull)
@@ -1732,6 +1732,13 @@ public class Rs2Walker {
 		// Handle door/gate near wilderness agility course
 		if (tileObject.getId() == ObjectID.BALANCEGATE52A || tileObject.getId() == ObjectID.BALANCEGATE52B_RIGHT || tileObject.getId() == ObjectID.BALANCEGATE52B_LEFT) {
 			Rs2Player.waitForAnimation(600 * 4);
+			return true;
+		}
+
+		if (tileObject.getId() == ObjectID.AERIAL_FISHING_BOAT) {
+			Rs2Dialogue.sleepUntilSelectAnOption();
+			Rs2Dialogue.clickOption(transport.getDisplayInfo(), true);
+			sleepUntil(() -> Rs2Player.getWorldLocation().distanceTo2D(transport.getDestination()) < OFFSET, 10000);
 			return true;
 		}
         return false;

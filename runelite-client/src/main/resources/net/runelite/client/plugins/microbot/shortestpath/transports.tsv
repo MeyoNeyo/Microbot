@@ -2109,6 +2109,8 @@
 3615 3362 0	3614 3361 0	Open;Large door;39253									
 3613 3338 0	3613 3342 1	Climb-up;Staircase;39491									
 3613 3342 1	3613 3338 0	Climb-down;Staircase;39492									
+3611 3327 0	3611 3323 1	Climb-up;Staircase;39491									
+3611 3323 1	3611 3327 0	Climb-down;Staircase;39492									
 3599 3317 0	3603 3317 1	Climb-up;Staircase;39491									
 3603 3317 1	3599 3317 0	Climb-down;Staircase;39492									
 3667 3375 0	3670 3375 0	Climb;Wall;39542									
@@ -4690,9 +4692,9 @@
 											
 # watchtower											
 2933 4712 2	2549 3112 1	Climb-down;Ladder;2797									
-2549 3112 1	2933 4712 2	Climb-down;Ladder;2797									
+2549 3112 1	2933 4712 2	Climb-up;Ladder;2796
 2544 3112 1	2544 3112 0	Climb-down;Ladder;17122									
-2544 3112 0	2544 3112 1	Climb-down;Ladder;17122									
+2544 3112 0	2544 3112 1	Climb-up;Ladder;2833
 											
 # kourend											
 1618 3680 0	1614 3680 1	Climb-up;Staircase;11807									
