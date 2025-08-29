@@ -10,6 +10,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.bossing.bryophyta.enums.BryophytaState;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
@@ -43,6 +44,7 @@ public class BryophytaScript extends Script {
     public static final WorldPoint VARROCK_EAST_BANK = new WorldPoint(3253, 3420, 0);
     public static final WorldPoint VARROCK_CHURCH = new WorldPoint(3253, 3485, 0);
     public static final WorldPoint BRYOPHYTA_ENTRANCE = new WorldPoint(3174, 9900, 0);
+    public static final WorldPoint BRYOPHYTA_LAIR_CENTER = new WorldPoint(3221, 9934, 0);
     
     // NPC and Object names/IDs
     public static final String BRYOPHYTA_NAME = "Bryophyta";
@@ -201,7 +203,7 @@ public class BryophytaScript extends Script {
                         handleTeleport();
                         break;
                     case IDLE:
-                        sleep(600, 1000);
+                        sleep(300, 500);
                         break;
                 }
 
@@ -306,6 +308,15 @@ public class BryophytaScript extends Script {
 
         // Check if we're in Bryophyta's lair
         if (isInBryophytaLair()) {
+            Microbot.log("Player is in Bryophyta's lair");
+            
+            // Force state change from WALKING_TO_ENTRANCE to combat if in lair
+            if (currentState == BryophytaState.WALKING_TO_ENTRANCE) {
+                Microbot.log("Player in lair but state is WALKING_TO_ENTRANCE, changing to FIGHTING_BOSS");
+                currentState = BryophytaState.FIGHTING_BOSS;
+                return;
+            }
+            
             // Check if Bryophyta is dead and we need to loot
             Rs2NpcModel bryophyta = findBryophyta();
             if (bryophyta == null || bryophyta.isDead() || bryophyta.getHealthRatio() == 0) {
@@ -380,7 +391,8 @@ public class BryophytaScript extends Script {
         }
 
         // Check if we have required supplies first (this should take priority over location)
-        if (hasRequiredSupplies()) {
+        // BUT NOT if we're already in the lair
+        if (hasRequiredSupplies() && !isInBryophytaLair()) {
             // If we're already at the entrance, don't override ENTERING_LAIR state
             if (Rs2Player.getWorldLocation().distanceTo(BRYOPHYTA_ENTRANCE) <= 5) {
                 // Player is at entrance with supplies, they should be entering or already in lair
@@ -409,8 +421,13 @@ public class BryophytaScript extends Script {
         }
 
         // Default: if we need supplies but not at bank, go banking
+        // BUT if we're in the lair, we should be fighting, not walking to entrance
         if (needsBanking()) {
             currentState = BryophytaState.BANKING;
+        } else if (isInBryophytaLair()) {
+            // If we're in the lair but reached this point, default to fighting
+            Microbot.log("In lair with supplies, defaulting to FIGHTING_BOSS state");
+            currentState = BryophytaState.FIGHTING_BOSS;
         } else {
             currentState = BryophytaState.WALKING_TO_ENTRANCE;
         }
@@ -498,7 +515,7 @@ public class BryophytaScript extends Script {
         } else {
             Microbot.log("Withdrawing mossy keys...");
             Rs2Bank.withdrawAll(MOSSY_KEY_ID); // Keys are stackable, only take 1 slot
-            sleep(600, 1000);
+            sleep(300, 500);
         }
 
         // Withdraw best available axe
@@ -513,7 +530,7 @@ public class BryophytaScript extends Script {
                 if (Rs2Bank.hasItem(potionName)) {
                     Microbot.log("Withdrawing " + config.potionQuantity() + " " + potionName + "(s)...");
                     Rs2Bank.withdrawX(potionName, config.potionQuantity());
-                    sleep(600, 1000);
+                    sleep(300, 500);
                 }
             }
         }
@@ -583,7 +600,7 @@ public class BryophytaScript extends Script {
                 if (Rs2Bank.withdrawX(axeName, 1)) {
                     Microbot.log("Successfully withdrew " + axeName);
                     axeWithdrawn = true;
-                    sleep(600, 1000);
+                    sleep(300, 500);
                     break;
                 } else {
                     Microbot.log("Failed to withdraw " + axeName);
@@ -604,17 +621,17 @@ public class BryophytaScript extends Script {
         if (Rs2Bank.hasItem("Air rune")) {
             Microbot.log("Withdrawing " + (teleportSets * 3) + " air rune(s)...");
             Rs2Bank.withdrawX("Air rune", teleportSets * 3);
-            sleep(600, 1000);
+            sleep(300, 500);
         }
         if (Rs2Bank.hasItem("Law rune")) {
             Microbot.log("Withdrawing " + teleportSets + " law rune(s)...");
             Rs2Bank.withdrawX("Law rune", teleportSets);
-            sleep(600, 1000);
+            sleep(300, 500);
         }
         if (Rs2Bank.hasItem("Fire rune")) {
             Microbot.log("Withdrawing " + teleportSets + " fire rune(s)...");
             Rs2Bank.withdrawX("Fire rune", teleportSets);
-            sleep(600, 1000);
+            sleep(300, 500);
         }
     }
 
@@ -648,7 +665,7 @@ public class BryophytaScript extends Script {
             
             if (Rs2Bank.withdrawX(bestFood.getId(), targetFoodSlots)) {
                 Microbot.log("Successfully initiated withdrawal of " + bestFood.getName());
-                sleep(800, 1200);
+                sleep(300, 500);
                 
                 // Verify the withdrawal worked
                 int newEmptySlots = Rs2Inventory.emptySlotCount();
@@ -752,7 +769,7 @@ public class BryophytaScript extends Script {
         } else {
             Microbot.log("Altar not found at church location");
             // If we can't find altar, just proceed (maybe player needs to move)
-            sleep(2000);
+            sleep(300, 500);
         }
     }
 
@@ -960,9 +977,59 @@ public class BryophytaScript extends Script {
         Rs2NpcModel bryophyta = findBryophyta();
         if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
             if (!Rs2Player.isInCombat()) {
-                Microbot.log("Attacking Bryophyta (ID: " + bryophyta.getId() + ")");
-                Rs2Npc.interact(bryophyta, "Attack");
-                sleep(1000, 1500);
+                Microbot.log("Found Bryophyta to attack (ID: " + bryophyta.getId() + ", Health: " + bryophyta.getHealthRatio() + ")");
+                
+                // Check if camera needs adjustment - similar to ApexFighter
+                if (!Rs2Camera.isTileOnScreen(bryophyta.getLocalLocation())) {
+                    Microbot.log("Adjusting camera to target Bryophyta");
+                    
+                    try {
+                        // Use character angle to turn camera
+                        int angle = Rs2Camera.getCharacterAngle(bryophyta);
+                        Rs2Camera.setAngle(angle, 20);
+                        
+                        // Wait for camera movement with timeout
+                        long cameraStartTime = System.currentTimeMillis();
+                        boolean cameraSuccess = false;
+                        
+                        while ((System.currentTimeMillis() - cameraStartTime) < 3000) {
+                            if (Rs2Camera.isTileOnScreen(bryophyta.getLocalLocation())) {
+                                cameraSuccess = true;
+                                break;
+                            }
+                            sleep(300, 500);
+                        }
+                        
+                        if (!cameraSuccess) {
+                            Microbot.log("Camera adjustment timed out, trying alternative approach");
+                            Rs2Camera.centerTileOnScreen(bryophyta.getLocalLocation(), 15.0);
+                            
+                            // Short wait for alternative method
+                            sleepUntil(() -> Rs2Camera.isTileOnScreen(bryophyta.getLocalLocation()), 1500);
+                        }
+                        
+                        if (!Rs2Camera.isTileOnScreen(bryophyta.getLocalLocation())) {
+                            Microbot.log("Failed to adjust camera to Bryophyta, skipping attack this cycle");
+                            return;
+                        }
+                        
+                        Microbot.log("Camera successfully positioned for Bryophyta");
+                        
+                    } catch (Exception e) {
+                        Microbot.log("Error during camera adjustment: " + e.getMessage());
+                        return;
+                    }
+                }
+                
+                Microbot.log("Attempting to attack Bryophyta");
+                boolean attackSuccess = Rs2Npc.interact(bryophyta, "Attack");
+                
+                if (attackSuccess) {
+                    Microbot.log("Successfully initiated attack on Bryophyta!");
+                    sleep(300, 500);
+                } else {
+                    Microbot.log("Failed to attack Bryophyta, will retry next cycle");
+                }
             }
         } else {
             // Bryophyta is dead or not found, set flags for chest looting
@@ -1012,9 +1079,38 @@ public class BryophytaScript extends Script {
         Rs2NpcModel growthling = findGrowthling();
         if (growthling != null && !growthling.isDead()) {
             if (!Rs2Player.isInCombat()) {
-                Microbot.log("Attacking growthling with axe (ID: " + growthling.getId() + ")");
-                Rs2Npc.interact(growthling, "Attack");
-                sleep(1000, 1500);
+                Microbot.log("Found growthling to attack (ID: " + growthling.getId() + ")");
+                
+                // Check if camera needs adjustment
+                if (!Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
+                    Microbot.log("Adjusting camera to target growthling");
+                    
+                    try {
+                        int angle = Rs2Camera.getCharacterAngle(growthling);
+                        Rs2Camera.setAngle(angle, 20);
+                        
+                        // Wait for camera adjustment
+                        long cameraStartTime = System.currentTimeMillis();
+                        while ((System.currentTimeMillis() - cameraStartTime) < 2000) {
+                            if (Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
+                                break;
+                            }
+                            sleep(300, 500);
+                        }
+                    } catch (Exception e) {
+                        Microbot.log("Error adjusting camera for growthling: " + e.getMessage());
+                    }
+                }
+                
+                Microbot.log("Attacking growthling with axe");
+                boolean attackSuccess = Rs2Npc.interact(growthling, "Attack");
+                
+                if (attackSuccess) {
+                    Microbot.log("Successfully initiated attack on growthling!");
+                    sleep(300, 500);
+                } else {
+                    Microbot.log("Failed to attack growthling, will retry next cycle");
+                }
             }
         } else {
             // PRIORITY 3: No more growthlings visible, switch back to main weapon and return to boss
@@ -1071,7 +1167,7 @@ public class BryophytaScript extends Script {
                 Microbot.log("Chest looted successfully, waiting for loot to drop...");
                 
                 // Wait for loot to appear on ground and pick it up
-                sleep(2000, 3000);
+                sleep(300, 500);
                 
                 // Keep looting items until no more valuable items are found in 5-tile range
                 Microbot.log("Picking up valuable items from chest");
@@ -1113,25 +1209,34 @@ public class BryophytaScript extends Script {
     private void lootDrops() {
         currentTarget = "Looting Drops";
         
+        // First check for mossy key specifically
+        if (Rs2GroundItem.exists(ItemID.MOSSY_KEY, 20)) {
+            Microbot.log("Mossy key found on ground! Picking it up...");
+            if (Rs2GroundItem.loot(ItemID.MOSSY_KEY)) {
+                Microbot.log("Successfully picked up mossy key!");
+                sleep(300, 500);
+            }
+        }
+        
         // Keep looting valuable ground items until no more are found
         Microbot.log("Looting ground items");
         int lootAttempts = 0;
         int maxLootAttempts = 10; // Prevent infinite loops
         
         while (lootAttempts < maxLootAttempts) {
-            boolean foundItems = Rs2GroundItem.lootItemBasedOnValue(1000, 5);
+            boolean foundItems = Rs2GroundItem.lootItemBasedOnValue(1000, 20);
             if (!foundItems) {
                 // No more valuable items found
                 break;
             }
-            sleep(1000, 1500);
+            sleep(300, 500);
             lootAttempts++;
         }
         
         Microbot.log("Ground item looting completed after " + lootAttempts + " attempts");
         
         // Wait a bit for looting to complete
-        sleep(1000, 2000);
+        sleep(300, 500);
         
         // Reset flags after looting
         bryophytaKilled = false;
@@ -1232,7 +1337,7 @@ public class BryophytaScript extends Script {
                 Microbot.log("Switching back to main weapon: " + mainWeapon);
                 Rs2Inventory.wield(mainWeapon);
                 hasAxeEquipped = false;
-                sleep(600, 1000);
+                sleep(300, 500);
             }
         }
     }
@@ -1251,7 +1356,7 @@ public class BryophytaScript extends Script {
                 Microbot.log("Equipping axe for growthlings: " + axeName);
                 Rs2Inventory.wield(axeName);
                 hasAxeEquipped = true;
-                sleep(600, 1000);
+                sleep(300, 500);
                 break;
             }
         }
@@ -1272,7 +1377,15 @@ public class BryophytaScript extends Script {
         if (!Microbot.isLoggedIn()) return false;
         WorldPoint location = Rs2Player.getWorldLocation();
         if (location == null) return false;
-        return location.getRegionID() == 12952; // Bryophyta's lair region
+        
+        // Check if player is within 30 tiles of the lair center
+        double distanceToLairCenter = location.distanceTo(BRYOPHYTA_LAIR_CENTER);
+        boolean inLair = distanceToLairCenter <= 30;
+        
+        // Debug logging - always show distance for troubleshooting
+        Microbot.log("Lair check - Player location: " + location + ", Distance to lair center: " + String.format("%.1f", distanceToLairCenter) + " tiles, In lair: " + inLair);
+        
+        return inLair;
     }
 
     private boolean isAtBank() {
@@ -1351,7 +1464,7 @@ public class BryophytaScript extends Script {
             if (Rs2Inventory.hasItem(potionName)) {
                 Microbot.log("Using potion before entering: " + potionName);
                 Rs2Inventory.interact(potionName, "Drink");
-                sleep(1000, 1500);
+                sleep(300, 500);
                 break; // Only use one potion
             }
         }
