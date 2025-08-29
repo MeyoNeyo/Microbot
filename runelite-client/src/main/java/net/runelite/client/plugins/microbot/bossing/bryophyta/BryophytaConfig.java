@@ -103,7 +103,7 @@ public interface BryophytaConfig extends Config {
     )
     @Range(min = 0, max = 10)
     default int potionQuantity() {
-        return 2;
+        return 1;
     }
 
     @ConfigItem(

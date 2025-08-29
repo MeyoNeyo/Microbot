@@ -44,9 +44,11 @@ public class BryophytaScript extends Script {
     public static final WorldPoint VARROCK_CHURCH = new WorldPoint(3253, 3485, 0);
     public static final WorldPoint BRYOPHYTA_ENTRANCE = new WorldPoint(3174, 9900, 0);
     
-    // NPC and Object names
+    // NPC and Object names/IDs
     public static final String BRYOPHYTA_NAME = "Bryophyta";
+    public static final int BRYOPHYTA_ID = 8195;
     public static final String GROWTHLING_NAME = "Growthling";
+    public static final int GROWTHLING_ID = 8194;
     public static final int GATE_ID = 32534;
     public static final String CHEST_NAME = "Chest";
     
@@ -287,14 +289,14 @@ public class BryophytaScript extends Script {
         
         // Check if we're in combat
         if (Rs2Player.isInCombat()) {
-            NPC growthling = Rs2Npc.getNpc(GROWTHLING_NAME);
+            Rs2NpcModel growthling = findGrowthling();
             if (growthling != null && !growthling.isDead()) {
                 currentState = BryophytaState.FIGHTING_GROWTHLINGS;
                 currentTarget = GROWTHLING_NAME;
                 return;
             }
             
-            NPC bryophyta = Rs2Npc.getNpc(BRYOPHYTA_NAME);
+            Rs2NpcModel bryophyta = findBryophyta();
             if (bryophyta != null && !bryophyta.isDead()) {
                 currentState = BryophytaState.FIGHTING_BOSS;
                 currentTarget = BRYOPHYTA_NAME;
@@ -305,8 +307,8 @@ public class BryophytaScript extends Script {
         // Check if we're in Bryophyta's lair
         if (isInBryophytaLair()) {
             // Check if Bryophyta is dead and we need to loot
-            NPC bryophyta = Rs2Npc.getNpc(BRYOPHYTA_NAME);
-            if (bryophyta == null || bryophyta.isDead()) {
+            Rs2NpcModel bryophyta = findBryophyta();
+            if (bryophyta == null || bryophyta.isDead() || bryophyta.getHealthRatio() == 0) {
                 // Priority 1: Loot chest if we have keys and haven't looted yet
                 if (needsChestLoot && hasKeys()) {
                     GameObject chest = Rs2GameObject.getGameObject("Chest", true, Rs2Player.getWorldLocation(), 10);
@@ -331,7 +333,7 @@ public class BryophytaScript extends Script {
             }
             
             // Look for Bryophyta to fight
-            if (bryophyta != null && !bryophyta.isDead()) {
+            if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
                 currentState = BryophytaState.FIGHTING_BOSS;
                 currentTarget = BRYOPHYTA_NAME;
                 return;
@@ -424,6 +426,13 @@ public class BryophytaScript extends Script {
                 log.info("Emergency teleport triggered at " + healthPercent + "% HP");
                 Rs2Magic.cast(Rs2Spells.VARROCK_TELEPORT);
                 sleepUntil(() -> !isInBryophytaLair(), 5000);
+                
+                // If we successfully teleported out, reset states and go to banking
+                if (!isInBryophytaLair()) {
+                    needsChestLoot = false;
+                    bryophytaKilled = false;
+                    changeState(BryophytaState.BANKING);
+                }
                 return true;
             }
         }
@@ -541,10 +550,12 @@ public class BryophytaScript extends Script {
         
         sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
         
-        // After banking, verify supplies and force state transition
-        if (hasRequiredSupplies()) {
-            Microbot.log("Banking successful, has all required supplies. Forcing state to WALKING_TO_ENTRANCE");
-            // Force the state change to avoid the updateState loop issue
+        // After banking, check what we need to do next
+        if (needsPrayer()) {
+            Microbot.log("Banking completed but prayer needs restoration. Going to church.");
+            changeState(BryophytaState.CHECKING_PRAYER);
+        } else if (hasRequiredSupplies()) {
+            Microbot.log("Banking successful, has all required supplies. Going to entrance.");
             changeState(BryophytaState.WALKING_TO_ENTRANCE);
         } else {
             Microbot.log("Still missing supplies after banking:");
@@ -552,6 +563,15 @@ public class BryophytaScript extends Script {
             Microbot.log("- Has axe: " + hasAxe());
             Microbot.log("- Food count: " + getFoodCount() + " (min required: " + config.minFoodCount() + ")");
             Microbot.log("- Prayer points: " + Rs2Player.getBoostedSkillLevel(Skill.PRAYER) + " (min required: " + config.minPrayerPoints() + ")");
+            
+            // Stay in banking if we still need basic supplies (not prayer)
+            if (needsBanking()) {
+                Microbot.log("Still need basic banking supplies, staying in banking state");
+                // Will try banking again next iteration
+            } else {
+                Microbot.log("Only missing prayer, going to church");
+                changeState(BryophytaState.CHECKING_PRAYER);
+            }
         }
     }
 
@@ -767,6 +787,9 @@ public class BryophytaScript extends Script {
         try {
             Microbot.log("Attempting to enter Bryophyta lair...");
             
+            // Use potion once before entering if we have potions
+            usePotionBeforeEntering();
+            
             // Try multiple methods to find the gate
             TileObject gate = null;
             
@@ -876,7 +899,10 @@ public class BryophytaScript extends Script {
     private void fightBoss() {
         currentTarget = BRYOPHYTA_NAME;
         
-        // Check for magic projectile to activate protect from magic
+        // Handle emergency situations first
+        if (handleEmergency()) return;
+        
+        // Check for magic projectile to activate/deactivate protect from magic
         boolean magicProjectilePresent = false;
         for (Projectile projectile : Microbot.getClient().getProjectiles()) {
             if (projectile.getId() == BRYOPHYTA_MAGIC_PROJECTILE_ID) {
@@ -885,44 +911,66 @@ public class BryophytaScript extends Script {
             }
         }
         
-        // Enable protection prayer only if magic projectile is detected
-        if (config.useProtectFromMagic() && magicProjectilePresent) {
-            if (config.useQuickPrayer()) {
-                if (!Rs2Prayer.isQuickPrayerEnabled()) {
-                    Rs2Prayer.toggleQuickPrayer(true);
+        // Handle protection prayer based on projectile detection
+        if (config.useProtectFromMagic()) {
+            if (magicProjectilePresent) {
+                // Turn ON protection when projectile is detected
+                if (config.useQuickPrayer()) {
+                    if (!Rs2Prayer.isQuickPrayerEnabled()) {
+                        Rs2Prayer.toggleQuickPrayer(true);
+                        Microbot.log("Activating quick prayer - magic projectile detected!");
+                    }
+                } else {
+                    if (!Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_MAGIC)) {
+                        Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_MAGIC, true);
+                        Microbot.log("Activating Protect from Magic - magic projectile detected!");
+                    }
                 }
             } else {
-                if (!Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_MAGIC)) {
-                    Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_MAGIC, true);
+                // Turn OFF protection when no projectile is detected
+                if (config.useQuickPrayer()) {
+                    if (Rs2Prayer.isQuickPrayerEnabled()) {
+                        Rs2Prayer.toggleQuickPrayer(false);
+                        Microbot.log("Deactivating quick prayer - no magic projectile detected");
+                    }
+                } else {
+                    if (Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_MAGIC)) {
+                        Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_MAGIC, false);
+                        Microbot.log("Deactivating Protect from Magic - no magic projectile detected");
+                    }
                 }
             }
         }
 
-        // Check for growthlings first (they have priority)
-        NPC growthling = Rs2Npc.getNpc(GROWTHLING_NAME);
+        // PRIORITY 1: Check for growthlings first (they can spawn multiple times during boss fight)
+        Rs2NpcModel growthling = findGrowthling();
         if (growthling != null && !growthling.isDead()) {
+            Microbot.log("Growthlings spawned during boss fight, switching to fight them");
             changeState(BryophytaState.FIGHTING_GROWTHLINGS);
             return;
         }
 
-        // Make sure we have main weapon equipped
+        // PRIORITY 2: Make sure we have main weapon equipped (not axe) for boss
         equipMainWeapon();
 
         // Eat food if health is low
         handleFood();
 
-        // Attack Bryophyta
-        Rs2NpcModel bryophyta = Rs2Npc.getNpc(BRYOPHYTA_NAME);
-        if (bryophyta != null && !bryophyta.isDead()) {
+        // PRIORITY 3: Find and attack Bryophyta
+        Rs2NpcModel bryophyta = findBryophyta();
+        if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
             if (!Rs2Player.isInCombat()) {
+                Microbot.log("Attacking Bryophyta (ID: " + bryophyta.getId() + ")");
                 Rs2Npc.interact(bryophyta, "Attack");
                 sleep(1000, 1500);
             }
         } else {
-            // Bryophyta is dead, set flags for chest looting
+            // Bryophyta is dead or not found, set flags for chest looting
+            Microbot.log("Bryophyta not found or dead, proceeding to loot");
             bryophytaKilled = true;
             needsChestLoot = true;
             killCount++;
+            Microbot.log("Bryophyta killed! Kill count: " + killCount);
             
             // Check if we need to loot chest first
             if (needsChestLoot && hasKeys()) {
@@ -936,23 +984,61 @@ public class BryophytaScript extends Script {
     private void fightGrowthlings() {
         currentTarget = GROWTHLING_NAME;
         
-        // Equip axe for fighting growthlings
+        // Handle emergency situations first
+        if (handleEmergency()) return;
+        
+        // Turn off protect from magic when fighting growthlings (they don't use magic attacks)
+        if (config.useProtectFromMagic()) {
+            if (config.useQuickPrayer()) {
+                if (Rs2Prayer.isQuickPrayerEnabled()) {
+                    Rs2Prayer.toggleQuickPrayer(false);
+                    Microbot.log("Deactivating quick prayer while fighting growthlings");
+                }
+            } else {
+                if (Rs2Prayer.isPrayerActive(Rs2PrayerEnum.PROTECT_MAGIC)) {
+                    Rs2Prayer.toggle(Rs2PrayerEnum.PROTECT_MAGIC, false);
+                    Microbot.log("Deactivating Protect from Magic while fighting growthlings");
+                }
+            }
+        }
+        
+        // PRIORITY 1: Equip axe for fighting growthlings (always ensure axe is equipped)
         equipAxe();
 
         // Eat food if health is low
         handleFood();
 
-        // Find and attack growthlings
-        Rs2NpcModel growthling = Rs2Npc.getNpc(GROWTHLING_NAME);
+        // PRIORITY 2: Find and attack growthlings
+        Rs2NpcModel growthling = findGrowthling();
         if (growthling != null && !growthling.isDead()) {
             if (!Rs2Player.isInCombat()) {
-                Rs2Npc.interact(growthling, "attack");
+                Microbot.log("Attacking growthling with axe (ID: " + growthling.getId() + ")");
+                Rs2Npc.interact(growthling, "Attack");
                 sleep(1000, 1500);
             }
         } else {
-            // No more growthlings, switch back to main weapon and go back to fighting boss
+            // PRIORITY 3: No more growthlings visible, switch back to main weapon and return to boss
+            Microbot.log("No more growthlings found, switching back to main weapon and returning to boss fight");
             equipMainWeapon();
-            changeState(BryophytaState.FIGHTING_BOSS);
+            
+            // Check if Bryophyta is still alive to continue fighting
+            Rs2NpcModel bryophyta = findBryophyta();
+            if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
+                Microbot.log("Bryophyta still alive, continuing boss fight");
+                changeState(BryophytaState.FIGHTING_BOSS);
+            } else {
+                // Bryophyta died while fighting growthlings
+                Microbot.log("Bryophyta died while fighting growthlings");
+                bryophytaKilled = true;
+                needsChestLoot = true;
+                killCount++;
+                
+                if (needsChestLoot && hasKeys()) {
+                    changeState(BryophytaState.LOOTING_CHEST);
+                } else {
+                    changeState(BryophytaState.LOOTING_DROPS);
+                }
+            }
         }
     }
 
@@ -973,6 +1059,7 @@ public class BryophytaScript extends Script {
             noMossyKey = false;
             bossStillAlive = false;
             
+            Microbot.log("Interacting with chest");
             Rs2GameObject.interact(chest, "Open");
             
             // Wait for chest interaction response
@@ -981,10 +1068,40 @@ public class BryophytaScript extends Script {
             if (chestLooted) {
                 keysUsed++;
                 needsChestLoot = false;
-                // Wait for loot to appear on ground
+                Microbot.log("Chest looted successfully, waiting for loot to drop...");
+                
+                // Wait for loot to appear on ground and pick it up
                 sleep(2000, 3000);
-                // Now go to loot drops
+                
+                // Keep looting items until no more valuable items are found in 5-tile range
+                Microbot.log("Picking up valuable items from chest");
+                int lootAttempts = 0;
+                int maxLootAttempts = 10; // Prevent infinite loops
+                
+                while (lootAttempts < maxLootAttempts) {
+                    boolean foundItems = Rs2GroundItem.lootItemBasedOnValue(1000, 5);
+                    if (!foundItems) {
+                        // No more valuable items found
+                        break;
+                    }
+                    sleep(300, 500);
+                    lootAttempts++;
+                }
+                
+                Microbot.log("Chest looting completed after " + lootAttempts + " attempts");
+                
+                // Now go to loot any additional drops
                 changeState(BryophytaState.LOOTING_DROPS);
+            } else if (noMossyKey) {
+                Microbot.log("No mossy key message received");
+                needsChestLoot = false;
+                changeState(BryophytaState.LOOTING_DROPS);
+            } else if (bossStillAlive) {
+                Microbot.log("Boss still alive message received");
+                changeState(BryophytaState.FIGHTING_BOSS);
+            } else {
+                Microbot.log("Chest interaction timeout");
+                // Try again next iteration
             }
         } else {
             Microbot.log("Chest not found, proceeding to loot drops");
@@ -996,8 +1113,22 @@ public class BryophytaScript extends Script {
     private void lootDrops() {
         currentTarget = "Looting Drops";
         
-        // Loot valuable ground items
-        Rs2GroundItem.lootItemBasedOnValue(1000, 3);
+        // Keep looting valuable ground items until no more are found
+        Microbot.log("Looting ground items");
+        int lootAttempts = 0;
+        int maxLootAttempts = 10; // Prevent infinite loops
+        
+        while (lootAttempts < maxLootAttempts) {
+            boolean foundItems = Rs2GroundItem.lootItemBasedOnValue(1000, 5);
+            if (!foundItems) {
+                // No more valuable items found
+                break;
+            }
+            sleep(1000, 1500);
+            lootAttempts++;
+        }
+        
+        Microbot.log("Ground item looting completed after " + lootAttempts + " attempts");
         
         // Wait a bit for looting to complete
         sleep(1000, 2000);
@@ -1006,17 +1137,26 @@ public class BryophytaScript extends Script {
         bryophytaKilled = false;
         needsChestLoot = false;
         
-        // Check if we need banking or prayer restoration
+        // Check what we need to do next - don't teleport immediately after boss kill
+        Microbot.log("Loot phase completed, checking next action...");
+        
+        // Emergency teleport check (but only if health is very low)
+        if (handleEmergency()) return;
+        
+        // Check if we need banking (supplies depleted)
         if (needsBanking()) {
+            Microbot.log("Need banking - supplies depleted");
             if (config.useVarrockTeleport() && hasVarrockTeleport()) {
                 changeState(BryophytaState.TELEPORTING);
             } else {
-                changeState(BryophytaState.BANKING);
+                changeState(BryophytaState.LEAVING_LAIR);
             }
-        } else if (Rs2Player.getBoostedSkillLevel(Skill.PRAYER) < config.minPrayerPoints()) {
-            changeState(BryophytaState.CHECKING_PRAYER);
+        } else if (needsPrayer()) {
+            Microbot.log("Need prayer restoration");
+            changeState(BryophytaState.LEAVING_LAIR); // Will go to church after leaving
         } else {
-            // Continue fighting
+            // We have supplies, continue fighting
+            Microbot.log("Still have supplies, continuing to fight");
             changeState(BryophytaState.FIGHTING_BOSS);
         }
     }
@@ -1171,12 +1311,11 @@ public class BryophytaScript extends Script {
     private boolean needsBanking() {
         return !hasKeys() || 
                !hasAxe() ||
-               getFoodCount() < config.minFoodCount() ||
-               Rs2Player.getBoostedSkillLevel(Skill.PRAYER) < config.minPrayerPoints();
+               getFoodCount() < config.minFoodCount();
     }
 
     private boolean needsPrayer() {
-        return Rs2Player.getBoostedSkillLevel(Skill.PRAYER) < Rs2Player.getRealSkillLevel(Skill.PRAYER) && 
+        return Rs2Player.getBoostedSkillLevel(Skill.PRAYER) < config.minPrayerPoints() && 
                !isInBryophytaLair();
     }
 
@@ -1196,6 +1335,66 @@ public class BryophytaScript extends Script {
     // Static getter methods for overlay
     public static int getFoodCount() {
         return Rs2Inventory.getInventoryFood().size();
+    }
+
+    /**
+     * Use potion once before entering the lair
+     */
+    private void usePotionBeforeEntering() {
+        if (config.potionsToTake().trim().isEmpty()) {
+            return; // No potions configured
+        }
+        
+        String[] potions = config.potionsToTake().split(",");
+        for (String potion : potions) {
+            String potionName = potion.trim();
+            if (Rs2Inventory.hasItem(potionName)) {
+                Microbot.log("Using potion before entering: " + potionName);
+                Rs2Inventory.interact(potionName, "Drink");
+                sleep(1000, 1500);
+                break; // Only use one potion
+            }
+        }
+    }
+
+    /**
+     * Find Bryophyta NPC by name and ID
+     */
+    private Rs2NpcModel findBryophyta() {
+        // Try by name first
+        Rs2NpcModel bryophyta = Rs2Npc.getNpc(BRYOPHYTA_NAME);
+        if (bryophyta != null) {
+            Microbot.log("Found Bryophyta by name: " + bryophyta.getName() + " (ID: " + bryophyta.getId() + ")");
+            return bryophyta;
+        }
+        
+        // Try by ID as fallback
+        bryophyta = Rs2Npc.getNpc(BRYOPHYTA_ID);
+        if (bryophyta != null) {
+            Microbot.log("Found Bryophyta by ID: " + bryophyta.getId() + " (Name: " + bryophyta.getName() + ")");
+            return bryophyta;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Find Growthling NPC by name and ID
+     */
+    private Rs2NpcModel findGrowthling() {
+        // Try by name first
+        Rs2NpcModel growthling = Rs2Npc.getNpc(GROWTHLING_NAME);
+        if (growthling != null) {
+            return growthling;
+        }
+        
+        // Try by ID as fallback
+        growthling = Rs2Npc.getNpc(GROWTHLING_ID);
+        if (growthling != null) {
+            return growthling;
+        }
+        
+        return null;
     }
 
     public static int getKeysInInventory() {
