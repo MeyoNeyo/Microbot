@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -26,6 +27,8 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.gameobject.Rs2ObjectModel;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -355,12 +358,18 @@ public class BryophytaScript extends Script {
                     GameObject chest = Rs2GameObject.getGameObject("Chest", true, Rs2Player.getWorldLocation(), 10);
                     if (chest != null) {
                         Microbot.log("Chest found nearby, setting state to LOOTING_CHEST");
-                        currentState = BryophytaState.LOOTING_CHEST;
+                        bryophyta = findBryophyta();
+                            if ((bryophyta == null || bryophyta.getHealthRatio() == 0) && !Rs2Player.isInCombat()) {
+                                currentState = BryophytaState.LOOTING_CHEST;
+                            }
                         return;
                     }
                     // If chest not found but we still need to loot it, try the enhanced detection
                     Microbot.log("Chest not found with basic search, trying enhanced detection - setting state to LOOTING_CHEST");
-                    currentState = BryophytaState.LOOTING_CHEST;
+                    bryophyta = findBryophyta();
+                            if ((bryophyta == null || bryophyta.getHealthRatio() == 0) && !Rs2Player.isInCombat()) {
+                                currentState = BryophytaState.LOOTING_CHEST;
+                            }
                     return;
                 }
                 
@@ -1134,7 +1143,9 @@ public class BryophytaScript extends Script {
             
             // Check if we need to loot chest first
             if (needsChestLoot && hasKeys()) {
-                changeState(BryophytaState.LOOTING_CHEST);
+                            if ((bryophyta == null || bryophyta.getHealthRatio() == 0) && !Rs2Player.isInCombat()) {
+                                currentState = BryophytaState.LOOTING_CHEST;
+                            }
             } else {
                 changeState(BryophytaState.LOOTING_DROPS);
             }
@@ -1224,11 +1235,228 @@ public class BryophytaScript extends Script {
                 killCount++;
                 
                 if (needsChestLoot && hasKeys()) {
-                    changeState(BryophytaState.LOOTING_CHEST);
+                    bryophyta = findBryophyta();
+                            if ((bryophyta == null || bryophyta.getHealthRatio() == 0) && !Rs2Player.isInCombat()) {
+                                currentState = BryophytaState.LOOTING_CHEST;
+                            }
                 } else {
                     changeState(BryophytaState.LOOTING_DROPS);
                 }
             }
+        }
+    }
+
+    /**
+     * Enhanced chest detection using Rs2ObjectModel for comprehensive object type analysis.
+     * This method searches ALL TileObject types (GameObject, GroundObject, WallObject, DecorativeObject)
+     * and uses advanced filtering based on actions, names, and IDs.
+     */
+    private GameObject findChestWithRs2ObjectModel() {
+        Microbot.log("=== Starting Rs2ObjectModel-based chest detection ===");
+        
+        WorldPoint playerPos = Rs2Player.getWorldLocation();
+        Microbot.log("Player position: " + playerPos);
+        
+        // Get ALL TileObjects in the area (not just GameObjects)
+        List<TileObject> allTileObjects = Rs2GameObject.getAll(obj -> {
+            if (obj == null || obj.getWorldLocation() == null) return false;
+            int distance = playerPos.distanceTo(obj.getWorldLocation());
+            return distance <= 15; // Only objects actually within 15 tiles
+        });
+        
+        Microbot.log("Found " + allTileObjects.size() + " TileObjects within 15 tiles for analysis");
+        
+        // Convert to Rs2ObjectModel for enhanced analysis
+        List<Rs2ObjectModel> objectModels = new ArrayList<>();
+        for (TileObject tileObject : allTileObjects) {
+            try {
+                // Get the tile for this object - we need to find it
+                Tile objectTile = findTileForObject(tileObject);
+                if (objectTile != null) {
+                    Rs2ObjectModel model = new Rs2ObjectModel(tileObject, objectTile);
+                    objectModels.add(model);
+                }
+            } catch (Exception e) {
+                Microbot.log("Error creating Rs2ObjectModel: " + e.getMessage());
+            }
+        }
+        
+        Microbot.log("Created " + objectModels.size() + " Rs2ObjectModel instances for analysis");
+        
+        // Analyze each object using Rs2ObjectModel capabilities
+        for (Rs2ObjectModel model : objectModels) {
+            try {
+                String name = model.getName();
+                int id = model.getId();
+                Rs2ObjectModel.ObjectType objectType = model.getObjectType();
+                int distance = model.getDistanceFromPlayer();
+                String[] actions = model.getActions();
+                
+                Microbot.log("Analyzing " + objectType.getTypeName() + ": ID=" + id + ", Name='" + name + "', Distance=" + distance);
+                
+                // Log available actions for debugging
+                if (actions != null && actions.length > 0) {
+                    StringBuilder actionStr = new StringBuilder();
+                    for (String action : actions) {
+                        if (action != null && !action.trim().isEmpty()) {
+                            if (actionStr.length() > 0) actionStr.append(", ");
+                            actionStr.append("'").append(action).append("'");
+                        }
+                    }
+                    if (actionStr.length() > 0) {
+                        Microbot.log("  Available actions: " + actionStr);
+                    }
+                }
+                
+                // Enhanced chest detection criteria
+                boolean isChestById = (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID);
+                boolean isChestByName = (name != null && (
+                    name.toLowerCase().contains("chest") ||
+                    name.toLowerCase().contains("loot") ||
+                    name.toLowerCase().contains("treasure") ||
+                    name.toLowerCase().contains("bryophyta")
+                ));
+                boolean hasChestAction = model.hasAction("Open") || 
+                                       model.hasAction("Use") || 
+                                       model.hasAction("Search") ||
+                                       model.hasAction("Loot");
+                
+                // Check if this could be our chest
+                if (isChestById || isChestByName || hasChestAction) {
+                    Microbot.log("*** POTENTIAL CHEST FOUND ***");
+                    Microbot.log("  Type: " + objectType.getTypeName());
+                    Microbot.log("  ID: " + id);
+                    Microbot.log("  Name: '" + name + "'");
+                    Microbot.log("  Distance: " + distance);
+                    Microbot.log("  Has chest action: " + hasChestAction);
+                    Microbot.log("  Match criteria: ID=" + isChestById + ", Name=" + isChestByName + ", Action=" + hasChestAction);
+                    
+                    // If it's a GameObject, we can return it directly
+                    if (objectType == Rs2ObjectModel.ObjectType.GAME_OBJECT) {
+                        Microbot.log("*** CONFIRMED: Found chest as GameObject! ***");
+                        return (GameObject) model.getTileObject();
+                    } else {
+                        Microbot.log("*** FOUND: Chest is a " + objectType.getTypeName() + " (not GameObject) ***");
+                        // For non-GameObjects, we might need special handling
+                        // But we can still try to interact with the TileObject
+                        TileObject chestTileObject = model.getTileObject();
+                        Microbot.log("Will attempt interaction with " + objectType.getTypeName() + " chest");
+                        
+                        // Try to interact directly with the TileObject
+                        if (tryInteractWithTileObject(chestTileObject, model)) {
+                            // Interaction successful, mark chest as looted
+                            return null; // Return null but handle the interaction
+                        }
+                    }
+                }
+                
+            } catch (Exception e) {
+                Microbot.log("Error analyzing Rs2ObjectModel: " + e.getMessage());
+            }
+        }
+        
+        Microbot.log("=== Rs2ObjectModel chest detection completed - no chest found ===");
+        return null;
+    }
+    
+    /**
+     * Helper method to find the Tile for a given TileObject.
+     * This is needed for Rs2ObjectModel construction.
+     */
+    private Tile findTileForObject(TileObject tileObject) {
+        try {
+            WorldPoint objectLocation = tileObject.getWorldLocation();
+            
+            // Convert world point to local point to find the tile
+            LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getLocalPlayer().getWorldView(), objectLocation);
+            if (localPoint == null) return null;
+            
+            // Get the scene and find the tile
+            Tile[][][] tiles = Microbot.getClient().getLocalPlayer().getWorldView().getScene().getTiles();
+            int plane = objectLocation.getPlane();
+            
+            if (plane < 0 || plane >= tiles.length) return null;
+            
+            int sceneX = localPoint.getSceneX();
+            int sceneY = localPoint.getSceneY();
+            
+            if (sceneX < 0 || sceneX >= tiles[plane].length || 
+                sceneY < 0 || sceneY >= tiles[plane][sceneX].length) {
+                return null;
+            }
+            
+            return tiles[plane][sceneX][sceneY];
+            
+        } catch (Exception e) {
+            Microbot.log("Error finding tile for object: " + e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Attempts to interact with a TileObject that is not a GameObject.
+     * Handles GroundObject, WallObject, and DecorativeObject interactions.
+     */
+    private boolean tryInteractWithTileObject(TileObject tileObject, Rs2ObjectModel model) {
+        try {
+            Microbot.log("Attempting to interact with " + model.getObjectType().getTypeName() + " chest");
+            
+            // Try to use Rs2GameObject.interact with the TileObject
+            boolean interactionSuccess = false;
+            
+            // Try different actions based on what's available
+            String[] actions = model.getActions();
+            if (actions != null) {
+                for (String action : actions) {
+                    if (action != null && !action.trim().isEmpty()) {
+                        String lowerAction = action.toLowerCase();
+                        if (lowerAction.contains("open") || lowerAction.contains("use") || 
+                            lowerAction.contains("search") || lowerAction.contains("loot")) {
+                            
+                            Microbot.log("Trying action: '" + action + "' on " + model.getObjectType().getTypeName());
+                            
+                            if (Rs2GameObject.interact(tileObject, action)) {
+                                Microbot.log("Successfully used '" + action + "' on " + model.getObjectType().getTypeName() + " chest!");
+                                interactionSuccess = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If specific actions failed, try default interaction
+            if (!interactionSuccess) {
+                Microbot.log("Trying default interaction on " + model.getObjectType().getTypeName());
+                interactionSuccess = Rs2GameObject.interact(tileObject);
+            }
+            
+            if (interactionSuccess) {
+                Microbot.log("Chest interaction successful! Waiting for loot to appear...");
+                sleep(Rs2Random.between(2000, 3000));
+                
+                // Check if loot appeared on ground
+                boolean lootFound = Rs2GroundItem.exists(ItemID.MOSSY_KEY, 15) || 
+                                  Rs2GroundItem.exists("Nature rune", 15) ||
+                                  Rs2GroundItem.exists("Law rune", 15) ||
+                                  Rs2GroundItem.exists("Death rune", 15);
+                
+                if (lootFound) {
+                    Microbot.log("Loot appeared on ground after chest interaction!");
+                    chestLooted = true;
+                    needsChestLoot = false;
+                    changeState(BryophytaState.LOOTING_DROPS);
+                    return true;
+                } else {
+                    Microbot.log("No loot found on ground after chest interaction");
+                }
+            }
+            
+            return interactionSuccess;
+            
+        } catch (Exception e) {
+            Microbot.log("Error interacting with TileObject: " + e.getMessage());
+            return false;
         }
     }
 
@@ -1242,8 +1470,104 @@ public class BryophytaScript extends Script {
         WorldPoint playerPos = Rs2Player.getWorldLocation();
         Microbot.log("Player position: " + playerPos);
         
-        // Strategy 1: Try the specific object ID from debug image (56370)
-        Microbot.log("Strategy 1: Searching for chest with ID " + CHEST_OBJECT_ID);
+        // Strategy 1: Use Rs2ObjectModel for comprehensive object type analysis (NEW)
+        Microbot.log("Strategy 1: Rs2ObjectModel-based detection (all TileObject types)");
+        GameObject rs2ModelChest = findChestWithRs2ObjectModel();
+        if (rs2ModelChest != null) {
+            Microbot.log("*** CHEST FOUND using Rs2ObjectModel approach! ***");
+            return rs2ModelChest;
+        }
+        
+        // Strategy 2: Search for objects using proximity-based filtering
+        Microbot.log("Strategy 2: Proximity-based search for chest objects within 15 tiles");
+        
+        // Use getGameObjects with explicit distance parameter and filter by actual distance
+        List<GameObject> allNearbyObjects = Rs2GameObject.getGameObjects(obj -> {
+            if (obj == null || obj.getWorldLocation() == null) return false;
+            int distance = playerPos.distanceTo(obj.getWorldLocation());
+            return distance <= 15; // Only objects actually within 15 tiles
+        }, playerPos, 15);
+        
+        Microbot.log("Found " + allNearbyObjects.size() + " GameObjects actually within 15 tiles");
+        
+        // If no objects found nearby at all, the chest might not have spawned yet
+        if (allNearbyObjects.isEmpty()) {
+            Microbot.log("WARNING: No GameObjects found within 15 tiles - chest may not have spawned yet");
+            return null; // Return null to trigger retry logic
+        }
+        
+        for (GameObject obj : allNearbyObjects) {
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    int distance = playerPos.distanceTo(obj.getWorldLocation());
+                    
+                    Microbot.log("Nearby object: ID=" + id + ", Name='" + name + "', Distance=" + distance);
+                    
+                    // Check if this is a chest
+                    if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID || 
+                        (name != null && (name.toLowerCase().contains("chest") || 
+                                        name.toLowerCase().contains("loot") ||
+                                        name.toLowerCase().contains("treasure")))) {
+                        Microbot.log("*** FOUND LOCAL CHEST: ID=" + id + ", Name='" + name + "', Distance=" + distance + " ***");
+                        return obj;
+                    }
+                }
+            } catch (Exception e) {
+                Microbot.log("Error examining nearby object: " + e.getMessage());
+            }
+        }
+        
+        // Strategy 2.5: Check GroundObjects and WallObjects for chest (might not be a GameObject)
+        Microbot.log("Strategy 2.5: Checking GroundObjects and WallObjects for chest");
+        
+        // Check all TileObjects in the area
+        List<TileObject> allTileObjects = Rs2GameObject.getAll(obj -> {
+            if (obj == null || obj.getWorldLocation() == null) return false;
+            int distance = playerPos.distanceTo(obj.getWorldLocation());
+            return distance <= 15;
+        });
+        
+        Microbot.log("Found " + allTileObjects.size() + " TileObjects within 15 tiles");
+        
+        for (TileObject obj : allTileObjects) {
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    int distance = playerPos.distanceTo(obj.getWorldLocation());
+                    String objectType = obj.getClass().getSimpleName();
+                    
+                    Microbot.log("TileObject: ID=" + id + ", Name='" + name + "', Type=" + objectType + ", Distance=" + distance);
+                    
+                    // Check if this is a chest
+                    if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID || 
+                        (name != null && (name.toLowerCase().contains("chest") || 
+                                        name.toLowerCase().contains("loot") ||
+                                        name.toLowerCase().contains("treasure") ||
+                                        name.toLowerCase().contains("bryophyta")))) {
+                        Microbot.log("*** FOUND CHEST AS " + objectType + ": ID=" + id + ", Name='" + name + "' ***");
+                        
+                        // If it's a GameObject, return it directly
+                        if (obj instanceof GameObject) {
+                            return (GameObject) obj;
+                        } else {
+                            // For GroundObject/WallObject, we need to handle differently
+                            Microbot.log("Chest found as " + objectType + " - will need special interaction handling");
+                            // Create a fake GameObject wrapper or handle interaction differently
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Continue searching
+            }
+        }
+        
+        // Strategy 3: Try the specific object ID from debug image (56370) with distance filtering
+        Microbot.log("Strategy 3: Searching for chest with ID " + CHEST_OBJECT_ID);
         GameObject chest = Rs2GameObject.getGameObject(CHEST_OBJECT_ID);
         if (chest != null) {
             WorldPoint chestPos = chest.getWorldLocation();
@@ -1252,14 +1576,14 @@ public class BryophytaScript extends Script {
             if (distance <= 15) {
                 return chest;
             } else {
-                Microbot.log("Chest too far away: " + distance + " tiles");
+                Microbot.log("Chest too far away: " + distance + " tiles (ignoring distant chest)");
             }
         } else {
             Microbot.log("No chest found with ID " + CHEST_OBJECT_ID);
         }
         
-        // Strategy 2: Try current name-based approach with distance limit
-        Microbot.log("Strategy 2: Searching for chest with name: " + CHEST_NAME);
+        // Strategy 4: Try current name-based approach with distance limit
+        Microbot.log("Strategy 4: Searching for chest with name: " + CHEST_NAME);
         chest = Rs2GameObject.getGameObject(CHEST_NAME);
         if (chest != null) {
             WorldPoint chestPos = chest.getWorldLocation();
@@ -1268,7 +1592,7 @@ public class BryophytaScript extends Script {
             if (distance <= 15) {
                 return chest;
             } else {
-                Microbot.log("Chest too far away: " + distance + " tiles");
+                Microbot.log("Chest too far away: " + distance + " tiles (ignoring distant chest)");
             }
         } else {
             Microbot.log("No chest found with name: " + CHEST_NAME);
@@ -1341,10 +1665,99 @@ public class BryophytaScript extends Script {
             Microbot.log("No chest found with predicate search");
         }
         
-        // Strategy 6: List all nearby GameObjects for debugging
-        Microbot.log("Strategy 6: Listing all nearby GameObjects for debugging");
+        // Strategy 5.5: Try a range of chest-like object IDs commonly used in RuneScape
+        Microbot.log("Strategy 5.5: Trying common chest object IDs");
+        int[] commonChestIds = {172, 173, 174, 375, 376, 377, 378, 379, 380, 14786, 56370, 56378, 56371, 56372, 56373, 56374, 56375, 56376, 56377, 56379, 56380};
+        for (int chestId : commonChestIds) {
+            chest = Rs2GameObject.getGameObject(chestId);
+            if (chest != null) {
+                WorldPoint chestPos = chest.getWorldLocation();
+                int distance = playerPos.distanceTo(chestPos);
+                if (distance <= 15) {
+                    Microbot.log("Found chest with common ID " + chestId + " at distance " + distance);
+                    return chest;
+                }
+            }
+        }
+        Microbot.log("No chest found with common IDs");
+        
+        // Strategy 6: Search for any objects that might appear as chests
+        Microbot.log("Strategy 6: Searching for any object that could be a chest within 15 tiles");
+        
+        // Get all objects within 15 tiles of player
+        List<TileObject> allObjects = Rs2GameObject.getAll(obj -> {
+            if (obj == null || obj.getWorldLocation() == null) return false;
+            int distance = playerPos.distanceTo(obj.getWorldLocation());
+            return distance <= 15;
+        });
+        
+        Microbot.log("Found " + allObjects.size() + " objects within 15 tiles:");
+        for (int i = 0; i < allObjects.size() && i < 30; i++) {
+            TileObject obj = allObjects.get(i);
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    int distance = playerPos.distanceTo(obj.getWorldLocation());
+                    
+                    Microbot.log("TileObject " + i + ": ID=" + id + ", Name='" + name + "', Type=" + obj.getClass().getSimpleName() + ", Distance=" + distance);
+                    
+                    // Check if this could be our chest
+                    if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID || 
+                        (name != null && (name.toLowerCase().contains("chest") || 
+                                        name.toLowerCase().contains("loot") ||
+                                        name.toLowerCase().contains("treasure") ||
+                                        name.toLowerCase().contains("bryophyta")))) {
+                        Microbot.log("*** POTENTIAL CHEST FOUND VIA TILEOBJECT SEARCH: ID=" + id + ", Name='" + name + "' ***");
+                        if (obj instanceof GameObject && distance <= 15) {
+                            return (GameObject) obj;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Microbot.log("Error examining TileObject " + i + ": " + e.getMessage());
+            }
+        }
+        
+        // Strategy 6.5: Check GroundObjects and WallObjects specifically
+        Microbot.log("Strategy 6.5: Checking GroundObjects and WallObjects for chest");
+        
+        // Check GroundObjects
+        GroundObject groundChest = Rs2GameObject.getGroundObject(obj -> {
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID ||
+                        (name != null && name.toLowerCase().contains("chest"))) {
+                        int distance = playerPos.distanceTo(obj.getWorldLocation());
+                        if (distance <= 15) {
+                            Microbot.log("Found GroundObject chest: ID=" + id + ", Name='" + name + "'");
+                            return true;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Continue searching
+            }
+            return false;
+        });
+        
+        if (groundChest != null) {
+            Microbot.log("*** FOUND CHEST AS GROUNDOBJECT ***");
+            // GroundObjects can't be directly cast to GameObject, but we can try to interact with them
+            // This might be the issue - the chest might be a GroundObject!
+        }
+        
+        // Strategy 7: List all nearby GameObjects for debugging
+        Microbot.log("Strategy 7: Listing all nearby GameObjects for debugging");
         List<GameObject> nearbyObjects = Rs2GameObject.getGameObjects(15);
         Microbot.log("Found " + nearbyObjects.size() + " nearby GameObjects:");
+        
+        // Check if any objects are actually within the expected range
+        int actualNearbyCount = 0;
         for (int i = 0; i < Math.min(nearbyObjects.size(), 20); i++) { // Limit to first 20 to avoid spam
             GameObject obj = nearbyObjects.get(i);
             try {
@@ -1354,7 +1767,12 @@ public class BryophytaScript extends Script {
                     int id = comp.getId();
                     WorldPoint objPos = obj.getWorldLocation();
                     int distance = playerPos.distanceTo(objPos);
-                    Microbot.log("Object " + i + ": ID=" + id + ", Name='" + name + "', Distance=" + distance);
+                    
+                    if (distance <= 15) {
+                        actualNearbyCount++;
+                    }
+                    
+                    Microbot.log("Object " + i + ": ID=" + id + ", Name='" + name + "', Distance=" + distance + " (pos: " + objPos + ")");
                     
                     // Check if this could be our chest
                     if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID || 
@@ -1370,6 +1788,13 @@ public class BryophytaScript extends Script {
             }
         }
         
+        Microbot.log("Objects actually within 15 tiles: " + actualNearbyCount + " out of " + nearbyObjects.size());
+        
+        if (actualNearbyCount == 0) {
+            Microbot.log("WARNING: getGameObjects(15) is not returning objects within 15 tiles!");
+            Microbot.log("This suggests a bug in the search method or the chest hasn't spawned yet.");
+        }
+        
         Microbot.log("No chest found with any detection method");
         return null;
     }
@@ -1378,6 +1803,10 @@ public class BryophytaScript extends Script {
         currentTarget = "Looting Chest";
         Microbot.log("Starting chest looting process...");
         
+        // Wait a moment for chest to spawn after boss death
+        Microbot.log("Waiting for chest to spawn...");
+        sleep(Rs2Random.between(2000, 3500));
+        
         if (!hasKeys()) {
             Microbot.log("No mossy keys available, skipping chest");
             needsChestLoot = false;
@@ -1385,7 +1814,23 @@ public class BryophytaScript extends Script {
             return;
         }
 
-        GameObject chest = findChestWithBackup();
+        // Try multiple times with delays to find the chest
+        int attempts = 0;
+        int maxAttempts = 5; // Increased from 3 to 5
+        GameObject chest = null;
+        
+        while (attempts < maxAttempts && chest == null) {
+            attempts++;
+            Microbot.log("Chest search attempt " + attempts + "/" + maxAttempts);
+            
+            chest = findChestWithBackup();
+            
+            if (chest == null && attempts < maxAttempts) {
+                Microbot.log("Chest not found, waiting longer before retry...");
+                sleep(Rs2Random.between(3000, 5000)); // Increased wait time
+            }
+        }
+
         if (chest != null) {
             // Get detailed chest information
             WorldPoint playerPos = Rs2Player.getWorldLocation();
@@ -1416,13 +1861,79 @@ public class BryophytaScript extends Script {
                 return;
             }
             
+            Microbot.log("Attempting to interact with chest at distance: " + distance + " tiles");
+            
+            // Check available actions first
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(chest);
+                if (comp != null) {
+                    String[] actions = comp.getActions();
+                    if (actions != null) {
+                        Microbot.log("Available chest actions: " + String.join(", ", actions));
+                        
+                        // Look for the best action to use
+                        String bestAction = null;
+                        for (String action : actions) {
+                            if (action != null) {
+                                String lowerAction = action.toLowerCase();
+                                if (lowerAction.contains("open")) {
+                                    bestAction = action;
+                                    break;
+                                } else if (lowerAction.contains("use") || lowerAction.contains("search")) {
+                                    bestAction = action;
+                                }
+                            }
+                        }
+                        
+                        if (bestAction != null) {
+                            Microbot.log("Using best action: '" + bestAction + "'");
+                            if (Rs2GameObject.interact(chest, bestAction)) {
+                                Microbot.log("Successfully used '" + bestAction + "' action on chest!");
+                                
+                                // Wait for chest to open and drop loot
+                                Microbot.log("Waiting for chest to open and drop loot...");
+                                sleep(Rs2Random.between(2000, 3000));
+                                
+                                // Check if loot appeared on ground
+                                // Check for specific valuable items or mossy key
+                                boolean lootFound = Rs2GroundItem.exists(ItemID.MOSSY_KEY, 15) || 
+                                                  Rs2GroundItem.exists("Nature rune", 15) ||
+                                                  Rs2GroundItem.exists("Law rune", 15) ||
+                                                  Rs2GroundItem.exists("Death rune", 15);
+                                
+                                if (lootFound) {
+                                    Microbot.log("Loot appeared on ground after opening chest!");
+                                    chestLooted = true;
+                                    needsChestLoot = false;
+                                    changeState(BryophytaState.LOOTING_DROPS);
+                                    return;
+                                } else {
+                                    Microbot.log("No loot found on ground after chest interaction");
+                                }
+                            } else {
+                                Microbot.log("Failed to use '" + bestAction + "' action");
+                            }
+                        } else {
+                            Microbot.log("No suitable action found, trying default interaction");
+                            if (Rs2GameObject.interact(chest)) {
+                                Microbot.log("Used default interaction");
+                                sleep(Rs2Random.between(2000, 3000));
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Microbot.log("Error checking chest actions: " + e.getMessage());
+            }
+            
             // Reset interaction flags
             chestClicked = false;
             chestLooted = false;
             noMossyKey = false;
             bossStillAlive = false;
             
-            Microbot.log("Attempting to interact with chest at distance: " + distance + " tiles");
+            // Legacy interaction methods as backup
+            Microbot.log("Attempting legacy interaction methods as backup...");
             
             // Try multiple interaction methods
             boolean interacted = false;

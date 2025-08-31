@@ -1,11 +1,4 @@
-i think lootChest() method never gets used
-i dont see any of the log stext inside the debug console output
-maybe because the status is set to running for some reason after the boss has died
-why is this and make it so that it correctly uses lootChest() method
-
-
 after doing banking run and the prayer points are lower then 80% do a altar run also to refil the prayer
-
 
 teleport is done 3 times in a row but just 1 teleport is good enough
 
