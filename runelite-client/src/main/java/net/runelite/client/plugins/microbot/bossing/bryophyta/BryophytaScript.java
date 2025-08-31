@@ -586,16 +586,12 @@ public class BryophytaScript extends Script {
         Microbot.log("Withdrawing axe...");
         withdrawBestAxe();
 
-        // Withdraw potions if configured
+        // Withdraw potions if configured (prioritizing lowest dose first)
         if (!config.potionsToTake().trim().isEmpty()) {
             String[] potions = config.potionsToTake().split(",");
             for (String potion : potions) {
                 String potionName = potion.trim();
-                if (Rs2Bank.hasItem(potionName)) {
-                    Microbot.log("Withdrawing " + config.potionQuantity() + " " + potionName + "(s)...");
-                    Rs2Bank.withdrawX(potionName, config.potionQuantity());
-                    sleep(300, 500);
-                }
+                withdrawPotionLowestDoseFirst(potionName, config.potionQuantity());
             }
         }
 
@@ -633,7 +629,10 @@ public class BryophytaScript extends Script {
         
         // After banking, check what we need to do next
         if (needsPrayer()) {
-            Microbot.log("Banking completed but prayer needs restoration. Going to church.");
+            Microbot.log("Banking completed but prayer needs restoration (below minimum). Going to church.");
+            changeState(BryophytaState.CHECKING_PRAYER);
+        } else if (needsPrayerRestoration()) {
+            Microbot.log("Banking completed but prayer is below 80%. Going to church for restoration.");
             changeState(BryophytaState.CHECKING_PRAYER);
         } else if (hasRequiredSupplies()) {
             Microbot.log("Banking successful, has all required supplies. Going to entrance.");
@@ -696,6 +695,62 @@ public class BryophytaScript extends Script {
             Microbot.log("Withdrawing " + teleportSets + " fire rune(s)...");
             Rs2Bank.withdrawX("Fire rune", teleportSets);
             sleep(300, 500);
+        }
+    }
+
+    /**
+     * Withdraws potions prioritizing lowest dose first (e.g., (1) before (2) before (3) before (4))
+     * @param basePotionName The base name of the potion (e.g., "Strength potion")
+     * @param quantity The total quantity to withdraw
+     */
+    private void withdrawPotionLowestDoseFirst(String basePotionName, int quantity) {
+        int remainingToWithdraw = quantity;
+        
+        Microbot.log("Attempting to withdraw " + quantity + " " + basePotionName + " (prioritizing lowest dose first)");
+        
+        // Try doses from 1 to 4
+        for (int dose = 1; dose <= 4 && remainingToWithdraw > 0; dose++) {
+            String potionNameWithDose = basePotionName + "(" + dose + ")";
+            
+            if (Rs2Bank.hasItem(potionNameWithDose)) {
+                // Get the quantity available in bank for this dose
+                int availableQuantity = Rs2Bank.count(potionNameWithDose);
+                int toWithdraw = Math.min(remainingToWithdraw, availableQuantity);
+                
+                if (toWithdraw > 0) {
+                    Microbot.log("Withdrawing " + toWithdraw + " " + potionNameWithDose + " (available: " + availableQuantity + ")");
+                    
+                    if (Rs2Bank.withdrawX(potionNameWithDose, toWithdraw)) {
+                        remainingToWithdraw -= toWithdraw;
+                        Microbot.log("Successfully withdrew " + toWithdraw + " " + potionNameWithDose + ". Remaining to withdraw: " + remainingToWithdraw);
+                        sleep(300, 500);
+                    } else {
+                        Microbot.log("Failed to withdraw " + potionNameWithDose);
+                    }
+                }
+            }
+        }
+        
+        // If we still couldn't get the exact potion name, try the base name without dose
+        if (remainingToWithdraw > 0 && Rs2Bank.hasItem(basePotionName)) {
+            Microbot.log("Trying base potion name: " + basePotionName);
+            int availableQuantity = Rs2Bank.count(basePotionName);
+            int toWithdraw = Math.min(remainingToWithdraw, availableQuantity);
+            
+            if (toWithdraw > 0) {
+                Microbot.log("Withdrawing " + toWithdraw + " " + basePotionName);
+                if (Rs2Bank.withdrawX(basePotionName, toWithdraw)) {
+                    remainingToWithdraw -= toWithdraw;
+                    Microbot.log("Successfully withdrew " + toWithdraw + " " + basePotionName + ". Remaining to withdraw: " + remainingToWithdraw);
+                    sleep(300, 500);
+                }
+            }
+        }
+        
+        if (remainingToWithdraw > 0) {
+            Microbot.log("Warning: Could not withdraw full quantity of " + basePotionName + ". Missing: " + remainingToWithdraw);
+        } else {
+            Microbot.log("Successfully withdrew all requested " + basePotionName + " potions");
         }
     }
 
@@ -798,8 +853,14 @@ public class BryophytaScript extends Script {
     private void handlePrayerCheck() {
         currentTarget = "Prayer Check";
         
+        int currentPrayer = Rs2Player.getBoostedSkillLevel(Skill.PRAYER);
+        int maxPrayer = Rs2Player.getRealSkillLevel(Skill.PRAYER);
+        double prayerPercentage = (double) currentPrayer / maxPrayer * 100;
+        
+        Microbot.log("Prayer restoration - Current: " + currentPrayer + "/" + maxPrayer + " (" + String.format("%.1f", prayerPercentage) + "%)");
+        
         // Check if prayer is already full
-        if (Rs2Player.getBoostedSkillLevel(Skill.PRAYER) >= Rs2Player.getRealSkillLevel(Skill.PRAYER)) {
+        if (currentPrayer >= maxPrayer) {
             Microbot.log("Prayer is full, proceeding to walk to entrance");
             changeState(BryophytaState.WALKING_TO_ENTRANCE);
             return;
@@ -2275,6 +2336,25 @@ public class BryophytaScript extends Script {
     private boolean needsPrayer() {
         return Rs2Player.getBoostedSkillLevel(Skill.PRAYER) < config.minPrayerPoints() && 
                !isInBryophytaLair();
+    }
+
+    /**
+     * Check if prayer needs restoration after banking (below 80% of total prayer)
+     * This is separate from needsPrayer() which checks against minimum config value
+     */
+    private boolean needsPrayerRestoration() {
+        int currentPrayer = Rs2Player.getBoostedSkillLevel(Skill.PRAYER);
+        int maxPrayer = Rs2Player.getRealSkillLevel(Skill.PRAYER);
+        double prayerPercentage = (double) currentPrayer / maxPrayer;
+        
+        // Only check for restoration if not in the lair (don't leave mid-fight for prayer)
+        boolean needsRestoration = prayerPercentage < 0.8 && !isInBryophytaLair();
+        
+        if (needsRestoration) {
+            Microbot.log("Prayer restoration needed: " + currentPrayer + "/" + maxPrayer + " (" + String.format("%.1f", prayerPercentage * 100) + "%)");
+        }
+        
+        return needsRestoration;
     }
 
     private boolean hasRequiredSupplies() {

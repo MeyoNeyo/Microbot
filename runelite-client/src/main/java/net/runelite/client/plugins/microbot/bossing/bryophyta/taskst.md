@@ -1,4 +1,4 @@
-after doing banking run and the prayer points are lower then 80% do a altar run also to refil the prayer
+after doing banking run and the prayer points are lower then 80% do an altar run also to refil the prayer
 
 teleport is done 3 times in a row but just 1 teleport is good enough
 
