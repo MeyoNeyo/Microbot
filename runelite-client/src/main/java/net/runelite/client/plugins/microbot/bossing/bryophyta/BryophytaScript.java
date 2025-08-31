@@ -53,6 +53,8 @@ public class BryophytaScript extends Script {
     public static final int GROWTHLING_ID = 8194;
     public static final int GATE_ID = 32534;
     public static final String CHEST_NAME = "Chest";
+    public static final int BRYOPHYTA_CHEST_ID = 14786; // From NpcID.BRYOPHYTA_CHEST
+    public static final int CHEST_OBJECT_ID = 56370; // From your debug image
     
     // Projectile IDs
     public static final int BRYOPHYTA_MAGIC_PROJECTILE_ID = 139;
@@ -173,34 +175,59 @@ public class BryophytaScript extends Script {
                 // Execute based on current state
                 switch (currentState) {
                     case BANKING:
-                        handleBanking();
+                        if (!isInBryophytaLair()) {
+                            handleBanking();
+                        }
                         break;
                     case CHECKING_PRAYER:
-                        handlePrayerCheck();
+                        if (!isInBryophytaLair()) {
+                            handlePrayerCheck();
+                        }
                         break;
                     case WALKING_TO_ENTRANCE:
-                        walkToEntrance();
+                        if (!isInBryophytaLair()) {
+                            walkToEntrance();
+                        }else{
+                            fightBoss();
+                        }
                         break;
                     case ENTERING_LAIR:
-                        enterLair();
+                        if (!isInBryophytaLair()) {
+                            enterLair();
+                        }
                         break;
                     case FIGHTING_BOSS:
-                        fightBoss();
+                        if (isInBryophytaLair()) {
+                            fightBoss();
+                        }
                         break;
                     case FIGHTING_GROWTHLINGS:
-                        fightGrowthlings();
+                        if (isInBryophytaLair()) {
+                            fightGrowthlings();
+                        }
                         break;
                     case LOOTING_CHEST:
-                        lootChest();
+                        if (isInBryophytaLair()) {
+                            Rs2NpcModel bryophyta = findBryophyta();
+                            if ((bryophyta == null || bryophyta.getHealthRatio() == 0) && !Rs2Player.isInCombat()) {
+                                lootChest();
+                            }
+                        }
                         break;
                     case LOOTING_DROPS:
-                        lootDrops();
+                        if (isInBryophytaLair()) {
+                            lootDrops();
+                        }
                         break;
                     case LEAVING_LAIR:
-                        leaveLair();
+                        if (!isInBryophytaLair()) {
+                            leaveLair();
+                        }
                         break;
                     case TELEPORTING:
-                        handleTeleport();
+                        if (!isInBryophytaLair()) {
+                            handleTeleport();
+                        }
                         break;
                     case IDLE:
                         sleep(300, 500);
@@ -343,6 +370,14 @@ public class BryophytaScript extends Script {
                 }
             }
             
+            // Look for growthlings first (prioritize over boss)
+            Rs2NpcModel growthling = findGrowthling();
+            if (growthling != null && !growthling.isDead()) {
+                currentState = BryophytaState.FIGHTING_GROWTHLINGS;
+                currentTarget = GROWTHLING_NAME;
+                return;
+            }
+            
             // Look for Bryophyta to fight
             if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
                 currentState = BryophytaState.FIGHTING_BOSS;
@@ -352,7 +387,13 @@ public class BryophytaScript extends Script {
             
             // Check if we should leave (no keys, low resources, etc.) - only when in lair
             if (isInBryophytaLair() && shouldLeave()) {
-                currentState = BryophytaState.LEAVING_LAIR;
+                if (config.useVarrockTeleport() && hasVarrockTeleport()) {
+                    Microbot.log("Should leave lair, using teleport");
+                    currentState = BryophytaState.TELEPORTING;
+                } else {
+                    Microbot.log("Should leave lair, walking out");
+                    currentState = BryophytaState.LEAVING_LAIR;
+                }
                 return;
             }
         }
@@ -444,10 +485,22 @@ public class BryophytaScript extends Script {
                 Rs2Magic.cast(Rs2Spells.VARROCK_TELEPORT);
                 sleepUntil(() -> !isInBryophytaLair(), 5000);
                 
-                // If we successfully teleported out, reset states and go to banking
+                // If we successfully teleported out, reset states and equipment
                 if (!isInBryophytaLair()) {
+                    Microbot.log("Successfully teleported out of lair, performing post-teleport cleanup");
+                    
+                    // Reset combat flags
                     needsChestLoot = false;
                     bryophytaKilled = false;
+                    
+                    // Ensure main weapon is equipped (in case axe was equipped during combat)
+                    Microbot.log("Checking equipment after emergency teleport");
+                    equipMainWeapon();
+                    
+                    // Small delay to let equipment change settle
+                    sleep(500, 800);
+                    
+                    // Change to banking state
                     changeState(BryophytaState.BANKING);
                 }
                 return true;
@@ -962,12 +1015,52 @@ public class BryophytaScript extends Script {
         // PRIORITY 1: Check for growthlings first (they can spawn multiple times during boss fight)
         Rs2NpcModel growthling = findGrowthling();
         if (growthling != null && !growthling.isDead()) {
-            Microbot.log("Growthlings spawned during boss fight, switching to fight them");
-            changeState(BryophytaState.FIGHTING_GROWTHLINGS);
+            Microbot.log("Growthlings spawned during boss fight, attacking them directly");
+            
+            // Equip axe for fighting growthlings
+            equipAxe();
+            
+            // Attack the growthling directly
+            if (!Rs2Player.isInCombat() || (growthling != null && !growthling.isDead())) {
+                Microbot.log("Found growthling to attack (ID: " + growthling.getId() + ")");
+                
+                // Check if camera needs adjustment
+                if (!Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
+                    Microbot.log("Adjusting camera to target growthling");
+                    
+                    try {
+                        int angle = Rs2Camera.getCharacterAngle(growthling);
+                        Rs2Camera.setAngle(angle, 20);
+                        
+                        // Wait for camera adjustment
+                        long cameraStartTime = System.currentTimeMillis();
+                        while ((System.currentTimeMillis() - cameraStartTime) < 2000) {
+                            if (Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
+                                break;
+                            }
+                            sleep(300, 500);
+                        }
+                    } catch (Exception e) {
+                        Microbot.log("Error adjusting camera for growthling: " + e.getMessage());
+                    }
+                }
+                
+                Microbot.log("Attacking growthling with axe");
+                boolean attackSuccess = Rs2Npc.interact(growthling, "Attack");
+                
+                if (attackSuccess) {
+                    Microbot.log("Successfully initiated attack on growthling!");
+                    sleep(300, 500);
+                } else {
+                    Microbot.log("Failed to attack growthling, will retry next cycle");
+                }
+            }
+            
+            // Stay in this method to continue fighting growthlings until all are dead
             return;
         }
-
-        // PRIORITY 2: Make sure we have main weapon equipped (not axe) for boss
+        
+        // All growthlings are dead, switch back to main weapon for boss
         equipMainWeapon();
 
         // Eat food if health is low
@@ -976,7 +1069,6 @@ public class BryophytaScript extends Script {
         // PRIORITY 3: Find and attack Bryophyta
         Rs2NpcModel bryophyta = findBryophyta();
         if (bryophyta != null && !bryophyta.isDead() && bryophyta.getHealthRatio() > 0) {
-            if (!Rs2Player.isInCombat()) {
                 Microbot.log("Found Bryophyta to attack (ID: " + bryophyta.getId() + ", Health: " + bryophyta.getHealthRatio() + ")");
                 
                 // Check if camera needs adjustment - similar to ApexFighter
@@ -1030,7 +1122,6 @@ public class BryophytaScript extends Script {
                 } else {
                     Microbot.log("Failed to attack Bryophyta, will retry next cycle");
                 }
-            }
         } else {
             // Bryophyta is dead or not found, set flags for chest looting
             Microbot.log("Bryophyta not found or dead, proceeding to loot");
@@ -1078,11 +1169,12 @@ public class BryophytaScript extends Script {
         // PRIORITY 2: Find and attack growthlings
         Rs2NpcModel growthling = findGrowthling();
         if (growthling != null && !growthling.isDead()) {
-            if (!Rs2Player.isInCombat()) {
-                Microbot.log("Found growthling to attack (ID: " + growthling.getId() + ")");
-                
-                // Check if camera needs adjustment
-                if (!Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
+            // Always attack growthlings when they are present, regardless of current combat state
+            // This is because growthlings are high priority targets that need immediate attention
+            Microbot.log("Found growthling to attack (ID: " + growthling.getId() + ")");
+            
+            // Check if camera needs adjustment
+            if (!Rs2Camera.isTileOnScreen(growthling.getLocalLocation())) {
                     Microbot.log("Adjusting camera to target growthling");
                     
                     try {
@@ -1111,8 +1203,8 @@ public class BryophytaScript extends Script {
                 } else {
                     Microbot.log("Failed to attack growthling, will retry next cycle");
                 }
-            }
-        } else {
+            }else 
+            {
             // PRIORITY 3: No more growthlings visible, switch back to main weapon and return to boss
             Microbot.log("No more growthlings found, switching back to main weapon and returning to boss fight");
             equipMainWeapon();
@@ -1138,36 +1230,269 @@ public class BryophytaScript extends Script {
         }
     }
 
+    /**
+     * Enhanced chest detection with multiple fallback strategies and comprehensive logging
+     */
+    private GameObject findChestWithBackup() {
+        Microbot.log("Starting comprehensive chest detection...");
+        
+        // Get player position for distance calculations
+        WorldPoint playerPos = Rs2Player.getWorldLocation();
+        Microbot.log("Player position: " + playerPos);
+        
+        // Strategy 1: Try the specific object ID from debug image (56370)
+        Microbot.log("Strategy 1: Searching for chest with ID " + CHEST_OBJECT_ID);
+        GameObject chest = Rs2GameObject.getGameObject(CHEST_OBJECT_ID);
+        if (chest != null) {
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            Microbot.log("Found chest using ID " + CHEST_OBJECT_ID + " at position: " + chestPos + ", distance: " + distance);
+            if (distance <= 15) {
+                return chest;
+            } else {
+                Microbot.log("Chest too far away: " + distance + " tiles");
+            }
+        } else {
+            Microbot.log("No chest found with ID " + CHEST_OBJECT_ID);
+        }
+        
+        // Strategy 2: Try current name-based approach with distance limit
+        Microbot.log("Strategy 2: Searching for chest with name: " + CHEST_NAME);
+        chest = Rs2GameObject.getGameObject(CHEST_NAME);
+        if (chest != null) {
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            Microbot.log("Found chest using name '" + CHEST_NAME + "' at position: " + chestPos + ", distance: " + distance);
+            if (distance <= 15) {
+                return chest;
+            } else {
+                Microbot.log("Chest too far away: " + distance + " tiles");
+            }
+        } else {
+            Microbot.log("No chest found with name: " + CHEST_NAME);
+        }
+        
+        // Strategy 3: Use the specific Bryophyta chest ID as backup
+        Microbot.log("Strategy 3: Searching for chest with Bryophyta ID: " + BRYOPHYTA_CHEST_ID);
+        chest = Rs2GameObject.getGameObject(BRYOPHYTA_CHEST_ID);
+        if (chest != null) {
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            Microbot.log("Found Bryophyta chest using ID " + BRYOPHYTA_CHEST_ID + " at position: " + chestPos + ", distance: " + distance);
+            if (distance <= 15) {
+                return chest;
+            } else {
+                Microbot.log("Chest too far away: " + distance + " tiles");
+            }
+        } else {
+            Microbot.log("No chest found with Bryophyta ID: " + BRYOPHYTA_CHEST_ID);
+        }
+        
+        // Strategy 4: Try searching for "Open chest" specifically
+        Microbot.log("Strategy 4: Searching for 'Open chest'");
+        chest = Rs2GameObject.getGameObject("Open chest");
+        if (chest != null) {
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            Microbot.log("Found chest with name 'Open chest' at position: " + chestPos + ", distance: " + distance);
+            if (distance <= 15) {
+                return chest;
+            } else {
+                Microbot.log("Chest too far away: " + distance + " tiles");
+            }
+        } else {
+            Microbot.log("No chest found with name 'Open chest'");
+        }
+        
+        // Strategy 5: Search for any chest-type objects in the area using predicate
+        Microbot.log("Strategy 5: Using predicate search for any chest-like object");
+        chest = Rs2GameObject.getGameObject(obj -> {
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    if (name != null) {
+                        boolean isChest = name.toLowerCase().contains("chest");
+                        if (isChest) {
+                            Microbot.log("Found potential chest: ID=" + id + ", Name='" + name + "'");
+                        }
+                        return isChest;
+                    }
+                }
+            } catch (Exception e) {
+                Microbot.log("Error in predicate search: " + e.getMessage());
+            }
+            return false;
+        });
+        
+        if (chest != null) {
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            Microbot.log("Found chest using predicate search at position: " + chestPos + ", distance: " + distance);
+            if (distance <= 15) {
+                return chest;
+            } else {
+                Microbot.log("Chest too far away: " + distance + " tiles");
+            }
+        } else {
+            Microbot.log("No chest found with predicate search");
+        }
+        
+        // Strategy 6: List all nearby GameObjects for debugging
+        Microbot.log("Strategy 6: Listing all nearby GameObjects for debugging");
+        List<GameObject> nearbyObjects = Rs2GameObject.getGameObjects(15);
+        Microbot.log("Found " + nearbyObjects.size() + " nearby GameObjects:");
+        for (int i = 0; i < Math.min(nearbyObjects.size(), 20); i++) { // Limit to first 20 to avoid spam
+            GameObject obj = nearbyObjects.get(i);
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                if (comp != null) {
+                    String name = comp.getName();
+                    int id = comp.getId();
+                    WorldPoint objPos = obj.getWorldLocation();
+                    int distance = playerPos.distanceTo(objPos);
+                    Microbot.log("Object " + i + ": ID=" + id + ", Name='" + name + "', Distance=" + distance);
+                    
+                    // Check if this could be our chest
+                    if (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID || 
+                        (name != null && (name.contains("chest") || name.contains("Chest")))) {
+                        Microbot.log("*** POTENTIAL CHEST FOUND: ID=" + id + ", Name='" + name + "' ***");
+                        if (distance <= 15) {
+                            return obj;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Microbot.log("Error examining object " + i + ": " + e.getMessage());
+            }
+        }
+        
+        Microbot.log("No chest found with any detection method");
+        return null;
+    }
+
     private void lootChest() {
         currentTarget = "Looting Chest";
+        Microbot.log("Starting chest looting process...");
         
         if (!hasKeys()) {
-            // No keys, skip chest and go to loot drops
+            Microbot.log("No mossy keys available, skipping chest");
             needsChestLoot = false;
             changeState(BryophytaState.LOOTING_DROPS);
             return;
         }
 
-        GameObject chest = Rs2GameObject.getGameObject(CHEST_NAME);
+        GameObject chest = findChestWithBackup();
         if (chest != null) {
+            // Get detailed chest information
+            WorldPoint playerPos = Rs2Player.getWorldLocation();
+            WorldPoint chestPos = chest.getWorldLocation();
+            int distance = playerPos.distanceTo(chestPos);
+            
+            try {
+                ObjectComposition comp = Rs2GameObject.convertToObjectComposition(chest);
+                if (comp != null) {
+                    Microbot.log("Found chest - ID: " + comp.getId() + ", Name: '" + comp.getName() + "', Distance: " + distance);
+                    
+                    // Log available actions
+                    String[] actions = comp.getActions();
+                    if (actions != null) {
+                        Microbot.log("Available chest actions: " + Arrays.toString(actions));
+                    }
+                } else {
+                    Microbot.log("Could not get chest composition");
+                }
+            } catch (Exception e) {
+                Microbot.log("Error getting chest details: " + e.getMessage());
+            }
+            
+            if (distance > 15) {
+                Microbot.log("Chest is too far away: " + distance + " tiles, moving closer");
+                Rs2Walker.walkTo(chestPos);
+                sleep(1000, 1500);
+                return;
+            }
+            
+            // Reset interaction flags
             chestClicked = false;
             chestLooted = false;
             noMossyKey = false;
             bossStillAlive = false;
             
-            Microbot.log("Interacting with chest");
-            Rs2GameObject.interact(chest, "Open");
+            Microbot.log("Attempting to interact with chest at distance: " + distance + " tiles");
+            
+            // Try multiple interaction methods
+            boolean interacted = false;
+            
+            // Method 1: Try "Open" action
+            Microbot.log("Method 1: Trying 'Open' action");
+            if (Rs2GameObject.interact(chest, "Open")) {
+                Microbot.log("Successfully used 'Open' action");
+                interacted = true;
+            } else {
+                Microbot.log("Failed to use 'Open' action");
+            }
+            
+            if (!interacted) {
+                // Method 2: Try "Use" action  
+                Microbot.log("Method 2: Trying 'Use' action");
+                if (Rs2GameObject.interact(chest, "Use")) {
+                    Microbot.log("Successfully used 'Use' action");
+                    interacted = true;
+                } else {
+                    Microbot.log("Failed to use 'Use' action");
+                }
+            }
+            
+            if (!interacted) {
+                // Method 3: Try default interaction (click)
+                Microbot.log("Method 3: Trying default interaction");
+                if (Rs2GameObject.interact(chest)) {
+                    Microbot.log("Successfully used default interaction");
+                    interacted = true;
+                } else {
+                    Microbot.log("Failed to use default interaction");
+                }
+            }
+            
+            if (!interacted) {
+                // Method 4: Try right-click menu
+                Microbot.log("Method 4: Trying right-click approach");
+                try {
+                    // Move camera to look at chest
+                    Rs2Camera.turnTo(chest);
+                    sleep(300, 500);
+                    
+                    // Try right-click and select first option
+                    if (Rs2GameObject.interact(chest, "Open")) {
+                        Microbot.log("Successfully used right-click 'Open'");
+                        interacted = true;
+                    }
+                } catch (Exception e) {
+                    Microbot.log("Error with right-click method: " + e.getMessage());
+                }
+            }
+            
+            if (!interacted) {
+                Microbot.log("All interaction methods failed, skipping chest");
+                needsChestLoot = false;
+                changeState(BryophytaState.LOOTING_DROPS);
+                return;
+            }
             
             // Wait for chest interaction response
-            sleepUntil(() -> chestClicked || noMossyKey || bossStillAlive, 3000);
+            Microbot.log("Waiting for chest interaction response...");
+            sleepUntil(() -> chestClicked || noMossyKey || bossStillAlive || chestLooted, 5000);
             
+            // Check results
             if (chestLooted) {
                 keysUsed++;
                 needsChestLoot = false;
-                Microbot.log("Chest looted successfully, waiting for loot to drop...");
+                Microbot.log("Chest looted successfully! Keys used: " + keysUsed);
                 
                 // Wait for loot to appear on ground and pick it up
-                sleep(300, 500);
+                sleep(500, 1000);
                 
                 // Keep looting items until no more valuable items are found in 5-tile range
                 Microbot.log("Picking up valuable items from chest");
@@ -1200,7 +1525,7 @@ public class BryophytaScript extends Script {
                 // Try again next iteration
             }
         } else {
-            Microbot.log("Chest not found, proceeding to loot drops");
+            Microbot.log("Chest not found with any detection method, proceeding to loot drops");
             needsChestLoot = false;
             changeState(BryophytaState.LOOTING_DROPS);
         }
@@ -1498,12 +1823,14 @@ public class BryophytaScript extends Script {
         // Try by name first
         Rs2NpcModel growthling = Rs2Npc.getNpc(GROWTHLING_NAME);
         if (growthling != null) {
+            Microbot.log("GROWTHLING_NAME found");
             return growthling;
         }
         
         // Try by ID as fallback
         growthling = Rs2Npc.getNpc(GROWTHLING_ID);
         if (growthling != null) {
+            Microbot.log("GROWTHLING_ID found");
             return growthling;
         }
         
