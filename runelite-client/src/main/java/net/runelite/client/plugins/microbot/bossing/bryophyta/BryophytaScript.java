@@ -347,25 +347,27 @@ public class BryophytaScript extends Script {
             // Check if Bryophyta is dead and we need to loot
             Rs2NpcModel bryophyta = findBryophyta();
             if (bryophyta == null || bryophyta.isDead() || bryophyta.getHealthRatio() == 0) {
-                // Priority 1: Loot chest if we have keys and haven't looted yet
+                Microbot.log("Bryophyta is dead/missing, entering loot phase - needsChestLoot: " + needsChestLoot + ", hasKeys: " + hasKeys());
+                
+                // Priority 1: Loot chest FIRST if we have keys and haven't looted yet
+                // This must come before ground items because opening chest drops items to ground
                 if (needsChestLoot && hasKeys()) {
                     GameObject chest = Rs2GameObject.getGameObject("Chest", true, Rs2Player.getWorldLocation(), 10);
                     if (chest != null) {
+                        Microbot.log("Chest found nearby, setting state to LOOTING_CHEST");
                         currentState = BryophytaState.LOOTING_CHEST;
                         return;
                     }
-                }
-                
-                // Priority 2: Loot ground items if available
-                if (Rs2GroundItem.exists(3, 1)) {
-                    currentState = BryophytaState.LOOTING_DROPS;
+                    // If chest not found but we still need to loot it, try the enhanced detection
+                    Microbot.log("Chest not found with basic search, trying enhanced detection - setting state to LOOTING_CHEST");
+                    currentState = BryophytaState.LOOTING_CHEST;
                     return;
                 }
                 
-                // Priority 3: Loot chest if we have keys (fallback)
-                GameObject chest = Rs2GameObject.getGameObject("Chest", true, Rs2Player.getWorldLocation(), 10);
-                if (chest != null && hasKeys()) {
-                    currentState = BryophytaState.LOOTING_CHEST;
+                // Priority 2: Loot ground items AFTER chest is looted
+                if (Rs2GroundItem.exists(3, 1)) {
+                    Microbot.log("Ground items detected, setting state to LOOTING_DROPS");
+                    currentState = BryophytaState.LOOTING_DROPS;
                     return;
                 }
             }
@@ -1563,9 +1565,16 @@ public class BryophytaScript extends Script {
         // Wait a bit for looting to complete
         sleep(300, 500);
         
-        // Reset flags after looting
+        // Reset flags after looting - but keep needsChestLoot if we haven't looted chest yet
         bryophytaKilled = false;
-        needsChestLoot = false;
+        // Only reset needsChestLoot if we actually don't have keys or already looted chest
+        // This prevents the flag from being reset prematurely when only ground items are looted
+        if (!hasKeys()) {
+            needsChestLoot = false;
+            Microbot.log("Reset needsChestLoot flag - no keys available");
+        } else {
+            Microbot.log("Keeping needsChestLoot flag - chest still needs to be looted");
+        }
         
         // Check what we need to do next - don't teleport immediately after boss kill
         Microbot.log("Loot phase completed, checking next action...");
