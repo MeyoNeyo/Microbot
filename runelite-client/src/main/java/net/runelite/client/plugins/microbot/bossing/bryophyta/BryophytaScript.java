@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -14,6 +15,7 @@ import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.gameobject.Rs2ObjectModel;
 import net.runelite.client.plugins.microbot.util.grounditem.Rs2GroundItem;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -27,6 +29,9 @@ import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
+
+import java.awt.Rectangle;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -230,7 +235,7 @@ public class BryophytaScript extends Script {
                         }
                         break;
                     case TELEPORTING:
-                        if (!isInBryophytaLair()) {
+                        if (isInBryophytaLair()) {
                             handleTeleport();
                         }
                         break;
@@ -1313,9 +1318,9 @@ public class BryophytaScript extends Script {
         currentTarget = "Looting Chest";
         Microbot.log("Starting chest looting process...");
         
-        // Wait a moment for chest to spawn after boss death
+        // Wait longer for chest to spawn after boss death (chest might take time to appear)
         Microbot.log("Waiting for chest to spawn...");
-        sleep(Rs2Random.between(2000, 3500));
+        sleep(Rs2Random.between(3000, 5000));
         
         if (!hasKeys()) {
             Microbot.log("No mossy keys available, skipping chest");
@@ -1326,7 +1331,7 @@ public class BryophytaScript extends Script {
 
         // Try multiple times with delays to find the chest
         int attempts = 0;
-        int maxAttempts = 3;
+        int maxAttempts = 5; // Increased from 3 to 5
         
         while (attempts < maxAttempts) {
             attempts++;
@@ -1341,7 +1346,7 @@ public class BryophytaScript extends Script {
             Microbot.log("Distance to chest: " + distanceToChest + " tiles");
             
             // Move closer if too far
-            if (distanceToChest > 10) {
+            if (distanceToChest > 2) {
                 Microbot.log("Too far from chest, moving closer...");
                 Rs2Walker.walkTo(BRYOPHYTA_CHEST_LOCATION);
                 sleep(1000, 1500);
@@ -1354,12 +1359,174 @@ public class BryophytaScript extends Script {
             noMossyKey = false;
             bossStillAlive = false;
             
-            // Use Rs2GameObject.interact with WorldPoint and action
+            // Debug: Check what objects are actually present at that location
+            Microbot.log("=== DEBUG: Checking ALL TileObject types at chest location ===");
+            
+            // First, check only GameObjects (our current approach)
+            GameObject chestAtLocation = Rs2GameObject.getGameObject(obj -> {
+                if (obj == null || obj.getWorldLocation() == null) return false;
+                WorldPoint objPos = obj.getWorldLocation();
+                return objPos.equals(BRYOPHYTA_CHEST_LOCATION);
+            });
+            
+            if (chestAtLocation != null) {
+                try {
+                    ObjectComposition comp = Rs2GameObject.convertToObjectComposition(chestAtLocation);
+                    if (comp != null) {
+                        Microbot.log("Found GameObject at exact location - ID: " + comp.getId() + ", Name: '" + comp.getName() + "'");
+                        String[] actions = comp.getActions();
+                        if (actions != null) {
+                            Microbot.log("Available actions: " + Arrays.toString(actions));
+                        }
+                    }
+                } catch (Exception e) {
+                    Microbot.log("Error getting GameObject details: " + e.getMessage());
+                }
+            } else {
+                Microbot.log("No GameObject found at exact chest location " + BRYOPHYTA_CHEST_LOCATION);
+            }
+            
+            // Now check ALL TileObject types (GameObject, GroundObject, WallObject, DecorativeObject)
+            Microbot.log("=== Checking ALL TileObject types within 5 tiles ===");
+            List<TileObject> allTileObjects = Rs2GameObject.getAll(obj -> {
+                if (obj == null || obj.getWorldLocation() == null) return false;
+                int distance = playerPos.distanceTo(obj.getWorldLocation());
+                return distance <= 5;
+            });
+            
+            Microbot.log("Found " + allTileObjects.size() + " TileObjects within 5 tiles:");
+            TileObject chestTileObject = null;
+            
+            for (int i = 0; i < allTileObjects.size(); i++) {
+                TileObject obj = allTileObjects.get(i);
+                try {
+                    // Use Rs2ObjectModel to identify object type
+                    Rs2ObjectModel.ObjectType objectType = Rs2ObjectModel.ObjectType.fromTileObject(obj);
+                    
+                    ObjectComposition comp = Rs2GameObject.convertToObjectComposition(obj);
+                    if (comp != null) {
+                        String name = comp.getName();
+                        int id = comp.getId();
+                        WorldPoint objPos = obj.getWorldLocation();
+                        int distance = playerPos.distanceTo(objPos);
+                        
+                        Microbot.log("  TileObject " + i + ": Type=" + objectType.getTypeName() + 
+                                   ", ID=" + id + ", Name='" + name + "', Pos=" + objPos + ", Distance=" + distance);
+                        
+                        // Check if this looks like a chest
+                        boolean isChestById = (id == CHEST_OBJECT_ID || id == BRYOPHYTA_CHEST_ID);
+                        boolean isChestByName = (name != null && (name.toLowerCase().contains("chest") || 
+                                               name.toLowerCase().contains("loot") ||
+                                               name.toLowerCase().contains("treasure") ||
+                                               name.toLowerCase().contains("bryophyta")));
+                        
+                        // Check if at exact chest location
+                        boolean isAtChestLocation = objPos.equals(BRYOPHYTA_CHEST_LOCATION);
+                        
+                        if (isChestById || isChestByName || isAtChestLocation) {
+                            Microbot.log("    *** POTENTIAL CHEST FOUND ***");
+                            Microbot.log("    Type: " + objectType.getTypeName());
+                            Microbot.log("    Match by ID: " + isChestById);
+                            Microbot.log("    Match by Name: " + isChestByName);
+                            Microbot.log("    At chest location: " + isAtChestLocation);
+                            
+                            String[] actions = comp.getActions();
+                            if (actions != null) {
+                                Microbot.log("    Available actions: " + Arrays.toString(actions));
+                            }
+                            
+                            // If this is at the exact chest location, use it!
+                            if (isAtChestLocation || (distance <= 2 && (isChestById || isChestByName))) {
+                                Microbot.log("    *** SELECTING THIS AS CHEST OBJECT ***");
+                                chestTileObject = obj;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    Microbot.log("  Error examining TileObject " + i + ": " + e.getMessage());
+                }
+            }
+            
+            // If we found a chest TileObject, try to interact with it directly
+            if (chestTileObject != null) {
+                Microbot.log("=== Found chest as TileObject, attempting direct interaction ===");
+                Rs2ObjectModel.ObjectType chestType = Rs2ObjectModel.ObjectType.fromTileObject(chestTileObject);
+                Microbot.log("Chest object type: " + chestType.getTypeName());
+                
+                // Try to interact with different actions
+                boolean interactionSuccess = false;
+                String[] actionsToTry = {"Open", "Use", "Search", "Loot"};
+                
+                for (String action : actionsToTry) {
+                    Microbot.log("Trying action '" + action + "' on " + chestType.getTypeName());
+                    if (Rs2GameObject.interact(chestTileObject, action)) {
+                        Microbot.log("Successfully used '" + action + "' action on chest!");
+                        interactionSuccess = true;
+                        break;
+                    }
+                }
+                
+                // If specific actions failed, try default interaction
+                if (!interactionSuccess) {
+                    Microbot.log("Trying default interaction on " + chestType.getTypeName());
+                    interactionSuccess = Rs2GameObject.interact(chestTileObject);
+                    if (interactionSuccess) {
+                        Microbot.log("Successfully used default interaction on chest!");
+                    }
+                }
+                
+                if (interactionSuccess) {
+                    // Wait for chest interaction response
+                    Microbot.log("Waiting for chest interaction response...");
+                    sleepUntil(() -> chestClicked || noMossyKey || bossStillAlive || chestLooted, 5000);
+                    
+                    // Check for loot spawning
+                    sleep(Rs2Random.between(1000, 2000));
+                    boolean lootFound = Rs2GroundItem.exists(ItemID.MOSSY_KEY, 15) || 
+                                      Rs2GroundItem.exists("Nature rune", 15) ||
+                                      Rs2GroundItem.exists("Law rune", 15) ||
+                                      Rs2GroundItem.exists("Death rune", 15);
+                    
+                    if (lootFound || chestLooted) {
+                        Microbot.log("Chest successfully opened via TileObject interaction! Loot appeared on ground.");
+                        chestLooted = true;
+                        needsChestLoot = false;
+                        changeState(BryophytaState.LOOTING_DROPS);
+                        return;
+                    } else if (noMossyKey) {
+                        Microbot.log("No mossy key message received");
+                        needsChestLoot = false;
+                        changeState(BryophytaState.LOOTING_DROPS);
+                        return;
+                    } else if (bossStillAlive) {
+                        Microbot.log("Boss still alive message received");
+                        changeState(BryophytaState.FIGHTING_BOSS);
+                        return;
+                    } else {
+                        Microbot.log("TileObject chest interaction completed but no clear result");
+                    }
+                } else {
+                    Microbot.log("Failed to interact with chest TileObject");
+                }
+            } else {
+                Microbot.log("No chest TileObject found at location or nearby");
+            }
+            
+            // Fallback 1: Use original Rs2GameObject.interact with WorldPoint and action
+            Microbot.log("=== Fallback 1: Rs2GameObject.interact with WorldPoint ===");
             Microbot.log("Attempting to interact with chest at " + BRYOPHYTA_CHEST_LOCATION + " using action '" + CHEST_ACTION + "'");
             boolean interactionSuccess = Rs2GameObject.interact(BRYOPHYTA_CHEST_LOCATION, CHEST_ACTION);
             
+            if (!interactionSuccess) {
+                Microbot.log("Rs2GameObject.interact failed, trying Fallback 2: Direct tile clicking");
+                
+                // Fallback 2: Direct tile clicking approach
+                Microbot.log("=== Fallback 2: Direct tile clicking at chest location ===");
+                interactionSuccess = clickOnChestTile();
+            }
+            
             if (interactionSuccess) {
-                Microbot.log("Successfully interacted with chest!");
+                Microbot.log("Successfully interacted with chest using one of the fallback methods!");
                 
                 // Wait for chest interaction response
                 Microbot.log("Waiting for chest interaction response...");
@@ -1471,6 +1638,146 @@ public class BryophytaScript extends Script {
             // We have supplies, continue fighting
             Microbot.log("Still have supplies, continuing to fight");
             changeState(BryophytaState.FIGHTING_BOSS);
+        }
+    }
+
+    /**
+     * Direct tile clicking approach for chest interaction.
+     * This method clicks directly on the chest tile coordinates when object detection fails.
+     */
+    private boolean clickOnChestTile() {
+        try {
+            Microbot.log("Attempting direct tile click at chest location: " + BRYOPHYTA_CHEST_LOCATION);
+            
+            // First, make sure we can see the chest location
+            // Rs2Camera.turnTo() might not work with WorldPoint, so we'll skip camera adjustment
+            Microbot.log("Preparing to click on chest tile");
+            sleep(300, 500);
+            
+            // Get current player position for validation
+            WorldPoint playerPos = Rs2Player.getWorldLocation();
+            int distance = playerPos.distanceTo(BRYOPHYTA_CHEST_LOCATION);
+            
+            if (distance > 3) {
+                Microbot.log("Too far from chest for tile clicking (distance: " + distance + "), moving closer");
+                Rs2Walker.walkTo(BRYOPHYTA_CHEST_LOCATION);
+                sleep(1000, 1500);
+                return false; // Try again next iteration
+            }
+            
+            // Method 1: Use Rs2Walker.walkCanvas() to click directly on the tile
+            Microbot.log("Method 1: Using Rs2Walker.walkCanvas() to click on chest tile");
+            WorldPoint result = Rs2Walker.walkCanvas(BRYOPHYTA_CHEST_LOCATION);
+            if (result != null) {
+                Microbot.log("Successfully clicked chest tile using Rs2Walker.walkCanvas()");
+                sleep(1000, 2000); // Wait for potential interaction
+                
+                // Check if clicking the tile triggered the chest interaction
+                boolean lootFound = Rs2GroundItem.exists(ItemID.MOSSY_KEY, 15) || 
+                                  Rs2GroundItem.exists("Nature rune", 15) ||
+                                  Rs2GroundItem.exists("Law rune", 15) ||
+                                  Rs2GroundItem.exists("Death rune", 15);
+                
+                if (lootFound) {
+                    Microbot.log("Direct tile click successfully triggered chest opening!");
+                    return true;
+                }
+            }
+            
+            // Method 2: Use Rs2UiHelper to get tile clickbox and click directly
+            Microbot.log("Method 2: Using Rs2UiHelper.getTileClickbox() for direct clicking");
+            
+            // First get the tile at the chest location
+            Tile chestTile = getTileAtWorldPoint(BRYOPHYTA_CHEST_LOCATION);
+            if (chestTile != null) {
+                Rectangle tileClickbox = Rs2UiHelper.getTileClickbox(chestTile);
+                net.runelite.api.Point apiClickPoint = Rs2UiHelper.getClickingPoint(tileClickbox, true);
+                
+                if (apiClickPoint != null && (apiClickPoint.getX() != 1 || apiClickPoint.getY() != 1)) { // Valid click point
+                    Microbot.log("Clicking directly on chest tile using clickbox");
+                    Microbot.getMouse().click((int)apiClickPoint.getX(), (int)apiClickPoint.getY());
+                    sleep(1000, 2000);
+                    
+                    // Check if direct clicking triggered the chest interaction
+                    boolean lootFound = Rs2GroundItem.exists(ItemID.MOSSY_KEY, 15) || 
+                                      Rs2GroundItem.exists("Nature rune", 15) ||
+                                      Rs2GroundItem.exists("Law rune", 15) ||
+                                      Rs2GroundItem.exists("Death rune", 15);
+                    
+                    if (lootFound) {
+                        Microbot.log("Direct tile clickbox click successfully triggered chest opening!");
+                        return true;
+                    }
+                } else {
+                    Microbot.log("Invalid click point for tile clickbox");
+                }
+            } else {
+                Microbot.log("Could not get tile at chest location");
+            }
+            
+            // Method 3: Try walking to the exact tile (this often triggers interaction)
+            Microbot.log("Method 3: Walking to exact chest tile as fallback");
+            Rs2Walker.walkTo(BRYOPHYTA_CHEST_LOCATION);
+            sleep(2000, 3000);
+            
+            Microbot.log("Direct tile clicking completed - checking for results");
+            return false; // Let the caller handle the result checking
+            
+        } catch (Exception e) {
+            Microbot.log("Error during direct tile clicking: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Helper method to get the tile at a given world point.
+     * This uses the scene to access tile information.
+     */
+    private Tile getTileAtWorldPoint(WorldPoint worldPoint) {
+        try {
+            Scene scene = Microbot.getClient().getTopLevelWorldView().getScene();
+            Tile[][][] tiles = scene.getTiles();
+            
+            LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), worldPoint);
+            if (localPoint == null) {
+                return null;
+            }
+            
+            int sceneX = localPoint.getSceneX();
+            int sceneY = localPoint.getSceneY();
+            int plane = worldPoint.getPlane();
+            
+            if (sceneX >= 0 && sceneX < 104 && 
+                sceneY >= 0 && sceneY < 104 && 
+                plane >= 0 && plane < 4) {
+                return tiles[plane][sceneX][sceneY];
+            }
+            
+        } catch (Exception e) {
+            Microbot.log("Error getting tile at world point: " + e.getMessage());
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Helper method to click on a tile if the method exists.
+     * This provides a safe way to call tile clicking methods that might not be available.
+     */
+    private boolean clickTileIfExists(WorldPoint location) {
+        try {
+            // Try to use Rs2Player or similar utility to click on the tile
+            // This is a placeholder - you might need to adjust based on available methods
+            
+            // Alternative: Try using Rs2Walker.walkTo() with a very short distance
+            // Sometimes this can trigger interactions
+            Rs2Walker.walkTo(location);
+            sleep(500, 1000);
+            
+            return true;
+        } catch (Exception e) {
+            Microbot.log("Tile clicking method not available or failed: " + e.getMessage());
+            return false;
         }
     }
 
