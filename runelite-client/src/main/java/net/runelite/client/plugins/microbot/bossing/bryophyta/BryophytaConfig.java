@@ -41,13 +41,18 @@ public interface BryophytaConfig extends Config {
     String bankingSection = "banking";
 
     @ConfigSection(
-            name = "Safety Settings",
-            description = "Safety and emergency settings", 
-            position = 3
+        name = "Safety Settings",
+        description = "Safety and emergency settings", 
+        position = 3
     )
     String safetySection = "safety";
 
-    // Combat Settings
+    @ConfigSection(
+        name = "Looting Settings",
+        description = "Looting and item collection settings",
+        position = 4
+    )
+    String lootingSection = "looting";    // Combat Settings
     @ConfigItem(
             keyName = "useProtectFromMagic",
             name = "Use Protect from Magic",
@@ -175,5 +180,42 @@ public interface BryophytaConfig extends Config {
     )
     default boolean stopOnNoKeys() {
         return true;
+    }
+
+    // Looting Settings
+    @ConfigItem(
+            keyName = "minItemValueToLoot",
+            name = "Minimum Item Value",
+            description = "Minimum GE value of items to loot (in GP)",
+            position = 1,
+            section = lootingSection
+    )
+    @Range(min = 0, max = 1000000)
+    default int minItemValueToLoot() {
+        return 1000;
+    }
+
+    @ConfigItem(
+            keyName = "maxItemValueToLoot",
+            name = "Maximum Item Value",
+            description = "Maximum GE value of items to loot (in GP, for safety)",
+            position = 2,
+            section = lootingSection
+    )
+    @Range(min = 1000, max = 10000000)
+    default int maxItemValueToLoot() {
+        return 10000000;
+    }
+
+    @ConfigItem(
+            keyName = "lootRadius",
+            name = "Loot Radius",
+            description = "Radius in tiles to search for items to loot",
+            position = 3,
+            section = lootingSection
+    )
+    @Range(min = 5, max = 20)
+    default int lootRadius() {
+        return 15;
     }
 }
